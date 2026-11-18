@@ -45,10 +45,15 @@ class FatFileSystem(
 
     private fun fatByteAt(copy: Int, o: Long): Long = bpb.fatStartSector + copy * bpb.fatSectors + o / bpb.bytesPerSector
     private fun fatGet(o: Long): Int = sector(fatByteAt(0, o))[(o % bpb.bytesPerSector).toInt()].toInt() and 0xff
-    private fun fatPut(o: Long, v: Int) {
-        for (copy in 0 until bpb.numFats) {
-            val sn = fatByteAt(copy, o); val s = if (copy == 0) sector(sn) else sector(sn)
-            s[(o % bpb.bytesPerSector).toInt()] = v.toByte(); putSector(sn, s)
+    /** Applies byte updates to every FAT copy, writing each affected sector ONCE per copy (no torn multi-byte entries within a sector). */
+    private fun fatPutMany(updates: List<Pair<Long, Int>>) {
+        val bps = bpb.bytesPerSector
+        val bySector = updates.groupBy { it.first / bps }
+        for (copy in 0 until bpb.numFats) for ((secIdx, ups) in bySector.entries.sortedBy { it.key }) {
+            val sn = bpb.fatStartSector + copy * bpb.fatSectors + secIdx
+            val s = sector(sn)
+            for ((o, v) in ups) s[(o % bps).toInt()] = v.toByte()
+            putSector(sn, s)
         }
     }
 
@@ -63,19 +68,20 @@ class FatFileSystem(
 
     private fun setFatEntry(c: Long, value: Long) {
         val off = when (bpb.type) { FatType.FAT12 -> c + c / 2; FatType.FAT16 -> c * 2; FatType.FAT32 -> c * 4 }
+        val ups = ArrayList<Pair<Long, Int>>(4)
         when (bpb.type) {
             FatType.FAT12 -> {
                 val v = value.toInt() and 0xfff
-                if (c and 1L == 0L) { fatPut(off, v and 0xff); fatPut(off + 1, (fatGet(off + 1) and 0xf0) or (v shr 8)) }
-                else { fatPut(off, (fatGet(off) and 0x0f) or ((v and 0xf) shl 4)); fatPut(off + 1, v shr 4) }
+                if (c and 1L == 0L) { ups += off to (v and 0xff); ups += (off + 1) to ((fatGet(off + 1) and 0xf0) or (v shr 8)) }
+                else { ups += off to ((fatGet(off) and 0x0f) or ((v and 0xf) shl 4)); ups += (off + 1) to (v shr 4) }
             }
-            FatType.FAT16 -> { fatPut(off, value.toInt() and 0xff); fatPut(off + 1, (value shr 8).toInt() and 0xff) }
+            FatType.FAT16 -> { ups += off to (value.toInt() and 0xff); ups += (off + 1) to ((value shr 8).toInt() and 0xff) }
             FatType.FAT32 -> {
-                val hiKeep = fatGet(off + 3) and 0xf0
-                fatPut(off, value.toInt() and 0xff); fatPut(off + 1, (value shr 8).toInt() and 0xff); fatPut(off + 2, (value shr 16).toInt() and 0xff)
-                fatPut(off + 3, hiKeep or ((value shr 24).toInt() and 0x0f))
+                ups += off to (value.toInt() and 0xff); ups += (off + 1) to ((value shr 8).toInt() and 0xff); ups += (off + 2) to ((value shr 16).toInt() and 0xff)
+                ups += (off + 3) to ((fatGet(off + 3) and 0xf0) or ((value shr 24).toInt() and 0x0f))
             }
         }
+        fatPutMany(ups)
     }
 
     private val eoc get() = when (bpb.type) { FatType.FAT12 -> 0xFFFL; FatType.FAT16 -> 0xFFFFL; FatType.FAT32 -> 0x0FFFFFFFL }
