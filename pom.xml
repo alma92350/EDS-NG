@@ -17,6 +17,7 @@
     <module>core/fs-exfat</module>
     <module>core/vault</module>
     <module>tools/cli</module>
+    <module>app</module>
   </modules>
 
   <properties>
@@ -49,6 +50,13 @@
         <groupId>org.jetbrains.kotlin</groupId>
         <artifactId>kotlin-maven-plugin</artifactId>
         <version>${kotlin.version}</version>
+        <configuration>
+          <args>
+            <!-- class-based lambdas: keeps bytecode dexable by the legacy dx tool -->
+            <arg>-Xlambdas=class</arg>
+            <arg>-Xsam-conversions=class</arg>
+          </args>
+        </configuration>
         <executions>
           <execution><id>compile</id><phase>compile</phase><goals><goal>compile</goal></goals></execution>
           <execution><id>test-compile</id><phase>test-compile</phase><goals><goal>test-compile</goal></goals></execution>

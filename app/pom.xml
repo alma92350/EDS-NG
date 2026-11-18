@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>org.openvault</groupId><artifactId>openvault-parent</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>openvault-app</artifactId>
+  <dependencies>
+    <dependency><groupId>org.openvault</groupId><artifactId>openvault-core-vault</artifactId><version>${project.version}</version></dependency>
+    <!-- compile-only: API 23 stubs from Ubuntu's android-sdk-platform-23 (the device supplies the real framework) -->
+    <dependency><groupId>android</groupId><artifactId>android</artifactId><version>23</version><scope>system</scope>
+      <systemPath>/usr/lib/android-sdk/platforms/android-23/android.jar</systemPath></dependency>
+  </dependencies>
+</project>

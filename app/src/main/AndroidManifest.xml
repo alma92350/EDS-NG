@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.openvault.app" android:versionCode="1" android:versionName="0.1.0-test">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+    <!-- Deliberately NO permissions: no INTERNET, no storage (all access through the system file picker). -->
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:name=".App"
+        android:theme="@android:style/Theme.Material.Light">
+        <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".BrowserActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".ViewerActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+    </application>
+</manifest>
