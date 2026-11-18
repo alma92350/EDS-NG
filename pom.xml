@@ -11,6 +11,7 @@
     <module>core/io</module>
     <module>core/testkit</module>
     <module>core/crypto</module>
+    <module>core/veracrypt</module>
   </modules>
 
   <properties>

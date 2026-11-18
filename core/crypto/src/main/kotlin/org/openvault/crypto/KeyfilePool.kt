@@ -3,7 +3,7 @@ package org.openvault.crypto
 import java.io.InputStream
 
 /**
- * VeraCrypt keyfile mixing (PRD §6.6, ⚠ VERIFY against fixtures: pool size 64 legacy / 128 current).
+ * VeraCrypt keyfile mixing (PRD §6.6, ⚠ VERIFY against fixtures: pool size 64 vs 128; default 64).
  * Per keyfile: running CRC-32 register over the first 1 MiB; after every byte the 4 register bytes
  * (big-endian) are added (mod 256) into the pool at a wrapping write position.
  */
@@ -17,7 +17,7 @@ object KeyfilePool {
         }
     }
 
-    fun mix(password: ByteArray, keyfiles: List<InputStream>, poolSize: Int = 128): ByteArray {
+    fun mix(password: ByteArray, keyfiles: List<InputStream>, poolSize: Int = 64): ByteArray {
         require(poolSize > 0)
         require(password.size <= poolSize) { "password longer than pool" }
         val pool = ByteArray(poolSize)
