@@ -63,20 +63,25 @@ def build(img, size, cluster=4096, label="NTFSTEST", small=False):
             for i in range(1600):
                 with open(os.path.join(hd, f"h{i:05d}.bin"), "wb") as f:
                     f.write(bytes([i % 256]) * 4096)
+            st = os.statvfs(mnt); print(f"  [{os.path.basename(img)}] before filler: free {st.f_bavail * st.f_frsize // 1024} KiB of {st.f_blocks * st.f_frsize // 1024} KiB", flush=True)
             filler = os.path.join(mnt, "filler.bin")
-            with open(filler, "wb") as f:  # fill every free cluster so that only the holes below remain free
-                try:
-                    while True:
-                        f.write(b"\0" * 65536); f.flush()
-                except OSError:
-                    pass
+            try:  # fill every free cluster so that only the holes below remain free (tolerate an already-full volume)
+                with open(filler, "wb") as f:
+                    try:
+                        while True:
+                            f.write(b"\0" * 65536); f.flush()
+                    except OSError:
+                        pass
+            except OSError as e:
+                print("  filler skipped:", e, flush=True)
             for i in range(0, 1600, 2):
                 os.remove(os.path.join(hd, f"h{i:05d}.bin"))
             for i in range(1, 1600, 2):
                 exp[f"holes/h{i:05d}.bin"] = {"sha256": hashlib.sha256(bytes([i % 256]) * 4096).hexdigest(), "size": 4096}
             frag = bytes(rnd.getrandbits(8) for _ in range(3_000_000))
             put("fragmented-big.bin", frag)
-            os.remove(filler)
+            if os.path.exists(filler):
+                os.remove(filler)
     finally:
         subprocess.run(["sync"])
         for _ in range(10):
@@ -112,7 +117,7 @@ def build_compressed(img, size=8 * 1024 * 1024):
 
 def main():
     cat = {}
-    for name, size, cluster in (("ntfs", 32 * 1024 * 1024, 4096), ("ntfs512", 24 * 1024 * 1024, 512)):
+    for name, size, cluster in (("ntfs", 64 * 1024 * 1024, 4096), ("ntfs512", 48 * 1024 * 1024, 512)):
         img = os.path.join(OUT, name + ".img")
         exp = build(img, size, cluster)
         cat[name] = {"file": name + ".img", "cluster": cluster, "label": "NTFSTEST", "files": exp}
