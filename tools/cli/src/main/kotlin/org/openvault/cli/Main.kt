@@ -1,6 +1,7 @@
 package org.openvault.cli
 
 import org.openvault.crypto.Prf
+import org.openvault.crypto.VolumeMode
 import org.openvault.fs.*
 import org.openvault.fs.fat.FatFileSystem
 import org.openvault.io.RandomAccessStorage
@@ -36,8 +37,9 @@ options:
   -p <password>      password on the command line (visible in process list!)
   -k <keyfile>       keyfile (repeatable)
   --rw               open read-write (default is read-only)
-  --pim <n>          personal iterations multiplier
-  --prf <name>       sha512|sha256|blake2s|whirlpool|streebog (default: auto-detect)
+  --pim <n>          personal iterations multiplier (VeraCrypt only)
+  --truecrypt        container is in TrueCrypt mode (RIPEMD-160/SHA-512/Whirlpool, no PIM)
+  --prf <name>       sha512|sha256|blake2s|whirlpool|streebog|ripemd160 (default: auto-detect for the mode)
 """
 
 fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStream): Int {
@@ -45,13 +47,14 @@ fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStr
     try {
         if (args.size < 2 || args[0] in setOf("-h", "--help")) { err.print(USAGE); return 2 }
         val cmd = args[0]; val container = File(args[1])
-        val pos = ArrayList<String>(); var pw: String? = null; var pwStdin = false; var pim = 0; var rw = false
-        val kfs = ArrayList<File>(); var prfs: List<Prf> = Prf.entries
+        val pos = ArrayList<String>(); var pw: String? = null; var pwStdin = false; var pim = 0; var rw = false; var tc = false
+        val kfs = ArrayList<File>(); var prfs: List<Prf>? = null
         var i = 2
         while (i < args.size) {
             when (val a = args[i]) {
                 "--password-stdin" -> pwStdin = true
                 "--rw" -> rw = true
+                "--truecrypt" -> tc = true
                 "-p" -> pw = args.getOrNull(++i) ?: return fail(err, "missing value for -p")
                 "-k" -> kfs += File(args.getOrNull(++i) ?: return fail(err, "missing value for -k"))
                 "--pim" -> pim = args.getOrNull(++i)?.toIntOrNull() ?: return fail(err, "invalid --pim")
@@ -60,30 +63,32 @@ fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStr
             }
             i++
         }
+        if (tc && pim != 0) return fail(err, "--pim is not supported with --truecrypt")
         if (cmd !in setOf("info", "ls", "cat", "get", "put")) return fail(err, "unknown command: $cmd")
         if (!container.isFile) return fail(err, "no such file: $container")
         if (pwStdin) pw = generateSequence { stdin.read().takeIf { it >= 0 && it != '\n'.code } }.toList().let { String(ByteArray(it.size) { k -> it[k].toByte() }, Charsets.UTF_8) }.trimEnd('\r')
         if (pw == null) return fail(err, "no password: use --password-stdin or -p")
         val password = pw.toByteArray(Charsets.UTF_8)
         val result = try {
-            VaultOpener.open(FileRandomAccessStorage(container, rw), password, pim, kfs.map { it.inputStream().buffered() }, prfs, readOnly = !rw)
+            VaultOpener.open(FileRandomAccessStorage(container, rw), password, pim, kfs.map { it.inputStream().buffered() }, prfs, readOnly = !rw, mode = if (tc) VolumeMode.TRUECRYPT else VolumeMode.VERACRYPT)
         } finally { password.fill(0) }
         when (result) {
             is VaultResult.Failed -> return fail(err, "Incorrect password, PIM, keyfiles or unsupported settings")
             is VaultResult.Cancelled -> return fail(err, "cancelled")
             is VaultResult.HiddenProtectionFailed -> return fail(err, "hidden volume protection failed")
             is VaultResult.UnsupportedFilesystem -> return fail(err, "Unsupported filesystem (${result.kind})")
-            is VaultResult.Opened -> result.fileSystem.use { fs -> return execute(cmd, pos, result, fs, o, out, err) }
+            is VaultResult.Opened -> result.fileSystem.use { fs -> return execute(cmd, pos, tc, result, fs, o, out, err) }
         }
     } catch (e: FsException) { return fail(err, e.message ?: "filesystem error") }
     finally { o.flush() }
 }
 
-private fun execute(cmd: String, pos: List<String>, r: VaultResult.Opened, fs: FileSystem, o: PrintStream, raw: OutputStream, err: PrintStream): Int {
+private fun execute(cmd: String, pos: List<String>, tc: Boolean, r: VaultResult.Opened, fs: FileSystem, o: PrintStream, raw: OutputStream, err: PrintStream): Int {
     when (cmd) {
         "info" -> {
             val v = r.volume; val sp = fs.spaceInfo()
             o.println("volume:     ${if (r.isHidden) "hidden" else "normal"}${if (r.usedBackupHeader) " (opened with BACKUP header)" else ""}")
+            o.println("format:     ${if (tc) "TrueCrypt" else "VeraCrypt"}")
             o.println("cipher:     AES-256-XTS")
             o.println("prf:        ${r.prf.displayName}")
             o.println("size:       ${v.sectorCount * v.sectorSize} bytes")

@@ -16,6 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.openvault.crypto.Prf
 import org.openvault.crypto.SecretBytes
+import org.openvault.crypto.VolumeMode
 import org.openvault.vault.HiddenProtection
 import org.openvault.vault.VaultOpener
 import org.openvault.vault.VaultResult
@@ -96,6 +97,8 @@ class MainActivity : Activity() {
         val pim = EditText(this).apply { hint = "PIM (optional)"; inputType = InputType.TYPE_CLASS_NUMBER; imeOptions = IME_NO_PERSONALIZED_LEARNING; noAutofill() }
         val ro = CheckBox(this).apply { text = "Open read-only (recommended)"; isChecked = true }
         val all = CheckBox(this).apply { text = "Try all hash algorithms (slow: adds Whirlpool, Streebog)" }
+        val tc = CheckBox(this).apply { text = "TrueCrypt mode (legacy containers: RIPEMD-160, SHA-512, Whirlpool; no PIM)" }
+        tc.setOnCheckedChangeListener { _, on -> pim.isEnabled = !on; all.isEnabled = !on; if (on) pim.setText("") }
         val prot = CheckBox(this).apply { text = "Protect hidden volume while writing" }
         val hpw = EditText(this).apply { hint = "Hidden volume password"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; visibility(false); imeOptions = IME_NO_PERSONALIZED_LEARNING; noAutofill() }
         prot.setOnCheckedChangeListener { _, on -> hpw.visibility(on) }
@@ -105,11 +108,11 @@ class MainActivity : Activity() {
         val addKf = Button(this).apply { text = "Add keyfile…"; setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2) } }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0)
-            listOf<View>(pw, pim, kf, addKf, ro, all, prot, hpw).forEach { addView(it, LinearLayout.LayoutParams(-1, -2)) }
+            listOf<View>(pw, pim, kf, addKf, tc, ro, all, prot, hpw).forEach { addView(it, LinearLayout.LayoutParams(-1, -2)) }
         }
         AlertDialog.Builder(this).setTitle("Unlock ${rec.name}").setView(ScrollView(this).apply { addView(box) })
             .setNegativeButton("Cancel", null)
-            .setPositiveButton("Unlock") { _, _ -> unlock(rec, pw, pim, ro.isChecked, all.isChecked, if (prot.isChecked) hpw else null) }.show()
+            .setPositiveButton("Unlock") { _, _ -> unlock(rec, pw, pim, ro.isChecked, all.isChecked, if (prot.isChecked) hpw else null, tc.isChecked) }.show()
     }
 
     private fun View.visibility(on: Boolean) { visibility = if (on) View.VISIBLE else View.GONE }
@@ -119,7 +122,7 @@ class MainActivity : Activity() {
         try { return SecretBytes.ofUtf8(chars) } finally { chars.fill('\u0000') }
     }
 
-    private fun unlock(rec: Rec, pwField: EditText, pimField: EditText, readOnly: Boolean, all: Boolean, hiddenField: EditText?) {
+    private fun unlock(rec: Rec, pwField: EditText, pimField: EditText, readOnly: Boolean, all: Boolean, hiddenField: EditText?, truecrypt: Boolean) {
         val pw = secret(pwField); val hp = hiddenField?.let { secret(it) }
         pwField.setText(""); hiddenField?.setText("")
         if (pw.size > 128 || (hp?.size ?: 0) > 128) { pw.close(); hp?.close(); toast("Passwords longer than 128 bytes are not supported"); return }
@@ -133,8 +136,9 @@ class MainActivity : Activity() {
                 val uri = Uri.parse(rec.uri)
                 storage = try { if (readOnly) SafStorage(contentResolver.openFileDescriptor(uri, "r")!!, false) else SafStorage(contentResolver.openFileDescriptor(uri, "rw")!!, true) }
                 catch (e: SecurityException) { wroteRo = true; SafStorage(contentResolver.openFileDescriptor(uri, "r")!!, false) }
-                result = VaultOpener.open(storage, pw.bytes, pimV, kfBytes.map { ByteArrayInputStream(it) }, if (all) Prf.entries else Prf.COMMON, wroteRo,
-                    hp?.let { HiddenProtection(it.bytes) }, { cancelled.get() }, { d, t -> runOnUiThread { dlg.setMessage("Header attempt $d of $t…") } })
+                result = VaultOpener.open(storage, pw.bytes, pimV, kfBytes.map { ByteArrayInputStream(it) }, when { truecrypt -> Prf.defaultFor(VolumeMode.TRUECRYPT); all -> Prf.defaultFor(VolumeMode.VERACRYPT); else -> Prf.COMMON }, wroteRo,
+                    hp?.let { HiddenProtection(it.bytes) }, { cancelled.get() }, { d, t -> runOnUiThread { dlg.setMessage("Header attempt $d of $t…") } },
+                    if (truecrypt) VolumeMode.TRUECRYPT else VolumeMode.VERACRYPT)
             } catch (e: Exception) { error = e.message ?: e.javaClass.simpleName }
             finally { pw.close(); hp?.close(); kfBytes.forEach { it.fill(0) } }
             runOnUiThread {
@@ -147,7 +151,7 @@ class MainActivity : Activity() {
                         Vault.start(rec.name, r.fileSystem, wroteRo, r.protection)
                         startActivity(Intent(this, BrowserActivity::class.java))
                     }
-                    is VaultResult.Failed -> fail("Incorrect password, PIM, keyfiles or unsupported settings." + if (!all) "\n\nOnly SHA-512, SHA-256 and BLAKE2s were tried. Tick \"Try all hash algorithms\" if the container uses Whirlpool or Streebog." else "")
+                    is VaultResult.Failed -> fail("Incorrect password, PIM, keyfiles or unsupported settings." + if (truecrypt) "\n\nTrueCrypt mode: RIPEMD-160, SHA-512 and Whirlpool were tried (AES only; no PIM). If this is a VeraCrypt container, untick TrueCrypt mode." else if (!all) "\n\nOnly SHA-512, SHA-256 and BLAKE2s were tried. Tick \"Try all hash algorithms\" for Whirlpool or Streebog, or \"TrueCrypt mode\" for old TrueCrypt containers." else "")
                     is VaultResult.HiddenProtectionFailed -> fail("The hidden volume password did not match, so protection could not be enabled.")
                     is VaultResult.UnsupportedFilesystem -> fail("Unsupported filesystem (${r.kind}). This version reads FAT12/16/32 and exFAT.")
                     is VaultResult.Cancelled -> toast("Cancelled")

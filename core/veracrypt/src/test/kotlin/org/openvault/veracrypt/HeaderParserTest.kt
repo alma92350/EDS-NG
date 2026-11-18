@@ -52,6 +52,21 @@ class HeaderParserTest {
         assertNull(HeaderParser.parse(a, storage))
     }
 
+    private val TC = org.openvault.crypto.VolumeMode.TRUECRYPT
+    @Test fun `truecrypt header v5 and v4 parse in truecrypt mode only`() {
+        for (v in listOf(4, 5)) {
+            val h = HeaderParser.parse(build(magic = "TRUE", version = v), storage, TC)!!
+            assertEquals(v, h.version); assertEquals(512, h.sectorSize)
+            assertNull(HeaderParser.parse(build(magic = "TRUE", version = v), storage), "VeraCrypt mode must reject TRUE")
+        }
+        assertNull(HeaderParser.parse(build(), storage, TC), "TrueCrypt mode must reject VERA")
+    }
+    @Test fun `truecrypt v4 has no sector size field (zero means 512)`() {
+        assertEquals(512, HeaderParser.parse(build(magic = "TRUE", version = 4, sector = 0), storage, TC)!!.sectorSize)
+        assertNull(HeaderParser.parse(build(version = 5, sector = 0), storage)) // VeraCrypt requires a valid sector size
+    }
+    @Test fun `truecrypt versions below 4 are rejected`() = assertNull(HeaderParser.parse(build(magic = "TRUE", version = 3), storage, TC))
+
     @Test fun `random data is always rejected`() {
         val r = java.util.Random(42)
         repeat(10_000) {
@@ -63,7 +78,7 @@ class HeaderParserTest {
 
 class HeaderSearchPlanTest {
     @Test fun `order is normal, hidden, backup normal, backup hidden`() {
-        val plan = HeaderSearchPlan.build(org.openvault.crypto.Prf.entries)
+        val plan = HeaderSearchPlan.build(org.openvault.crypto.Prf.defaultFor(org.openvault.crypto.VolumeMode.VERACRYPT))
         assertEquals(20, plan.size)
         assertEquals(HeaderLocation.NORMAL, plan.first().location)
         assertEquals(listOf(HeaderLocation.NORMAL, HeaderLocation.HIDDEN, HeaderLocation.BACKUP_NORMAL, HeaderLocation.BACKUP_HIDDEN),

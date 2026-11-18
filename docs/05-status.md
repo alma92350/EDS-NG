@@ -31,3 +31,11 @@
 3. **The "derive once, test normal + hidden header" optimisation (§6.3) is impossible**: each header has its own salt.
 4. **FAT32 needs >= 65 525 clusters** (~33 MB at 512 B clusters): the PRD's 2-5 MB FAT32 fixtures cannot exist; small fixtures are FAT16/FAT12.
 5. B1-B4, M1-M8 findings from `03-development-plan.md` stand; B1 (hidden-volume protection) is implemented and tested.
+
+## TrueCrypt mode (added on request, 2026-11-18)
+Supported: magic `TRUE`, header versions 4 and 5, AES-XTS only, PRFs RIPEMD-160 (2000 iterations), SHA-512 (1000), Whirlpool (1000),
+no PIM, keyfiles (same algorithm), hidden volumes and backup headers, hidden-volume protection. Selected explicitly (CLI `--truecrypt`,
+Android "TrueCrypt mode" checkbox); a container is never auto-detected as TrueCrypt (deniability).
+NOT supported: Serpent/Twofish/cascades, LRW/CBC (TrueCrypt < 5), header versions < 4, SHA-1.
+Caveats: the iteration counts, header versions and v4 "sector size 0" handling come from the TrueCrypt documentation as remembered
+and from our own generator; no real TrueCrypt container has been tested yet. If a real container fails, report its TrueCrypt version and cipher.

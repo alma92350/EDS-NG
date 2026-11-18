@@ -25,6 +25,9 @@ class Pbkdf2Test {
         "7b88e65e6e95a118bc995f681a391cbd7b46e0cf9750a81100f613add62d84be",
         Pbkdf2.derive(Prf.BLAKE2S, pw, salt, 2, 32).toHex())
 
+    @Test fun `ripemd160 vector (Python hashlib)`() = assertEquals(
+        "768dcc27b7bfdef794a1ff9d935090fcf598555e", Pbkdf2.derive(Prf.RIPEMD160, pw, salt, 2, 20).toHex())
+
     /** Whirlpool/Streebog have no stdlib oracle: check against a from-scratch HMAC built on the raw digest. */
     @ParameterizedTest @EnumSource(Prf::class)
     fun `iteration 1 equals plain HMAC of salt||INT(1)`(prf: Prf) {
@@ -59,8 +62,10 @@ class Pbkdf2Test {
 }
 
 class IterationPolicyTest {
-    @ParameterizedTest @EnumSource(Prf::class)
+    @ParameterizedTest @EnumSource(Prf::class, names = ["SHA512", "SHA256", "BLAKE2S", "WHIRLPOOL", "STREEBOG"])
     fun `default PIM gives 500000`(prf: Prf) = assertEquals(500_000, IterationPolicy.iterations(prf, 0))
+
+    @Test fun `veracrypt ripemd160 uses 655331 by default`() = assertEquals(655_331, IterationPolicy.iterations(Prf.RIPEMD160, 0))
 
     @Test fun `custom PIM`() {
         assertEquals(25_000, IterationPolicy.iterations(Prf.SHA512, 10))
@@ -69,5 +74,22 @@ class IterationPolicyTest {
 
     @Test fun `negative PIM rejected`() {
         assertThrows(IllegalArgumentException::class.java) { IterationPolicy.iterations(Prf.SHA512, -1) }
+    }
+
+    @Test fun `truecrypt fixed iteration counts`() {
+        assertEquals(2000, IterationPolicy.iterations(Prf.RIPEMD160, 0, VolumeMode.TRUECRYPT))
+        assertEquals(1000, IterationPolicy.iterations(Prf.SHA512, 0, VolumeMode.TRUECRYPT))
+        assertEquals(1000, IterationPolicy.iterations(Prf.WHIRLPOOL, 0, VolumeMode.TRUECRYPT))
+    }
+
+    @Test fun `truecrypt has no PIM and no sha256 blake2s streebog`() {
+        assertThrows(IllegalArgumentException::class.java) { IterationPolicy.iterations(Prf.SHA512, 5, VolumeMode.TRUECRYPT) }
+        for (p in listOf(Prf.SHA256, Prf.BLAKE2S, Prf.STREEBOG))
+            assertThrows(IllegalArgumentException::class.java) { IterationPolicy.iterations(p, 0, VolumeMode.TRUECRYPT) }
+    }
+
+    @Test fun `default prf lists per mode`() {
+        assertEquals(listOf(Prf.SHA512, Prf.SHA256, Prf.BLAKE2S, Prf.WHIRLPOOL, Prf.STREEBOG), Prf.defaultFor(VolumeMode.VERACRYPT))
+        assertEquals(listOf(Prf.RIPEMD160, Prf.SHA512, Prf.WHIRLPOOL), Prf.defaultFor(VolumeMode.TRUECRYPT))
     }
 }

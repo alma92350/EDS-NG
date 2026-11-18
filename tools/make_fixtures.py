@@ -10,7 +10,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "testing", "fixtures")
 HDR = 131072
-PRFS = {"sha512": "sha512", "sha256": "sha256", "blake2s": "blake2s"}
+PRFS = {"sha512": "sha512", "sha256": "sha256", "blake2s": "blake2s", "ripemd160": "ripemd160"}
+TC_ITER = {"ripemd160": 2000, "sha512": 1000}  # TrueCrypt: fixed iteration counts, no PIM
 
 
 def pbkdf2(prf, pw, salt, iters, n=64):
@@ -48,10 +49,10 @@ for n in range(256):
     zlib_table.append(c)
 
 
-def header(master, vol_size, hidden_size, data_off, enc_size, flags=0):
+def header(master, vol_size, hidden_size, data_off, enc_size, flags=0, magic=b"VERA", version=5, sector=512):
     h = bytearray(448)
-    h[0:4] = b"VERA"
-    struct.pack_into(">H", h, 4, 5)       # header version
+    h[0:4] = magic
+    struct.pack_into(">H", h, 4, version)       # header version
     struct.pack_into(">H", h, 6, 0x010b)  # min program version 1.11
     struct.pack_into(">I", h, 8, zlib.crc32(master) & 0xFFFFFFFF)
     struct.pack_into(">Q", h, 28, hidden_size)
@@ -59,21 +60,26 @@ def header(master, vol_size, hidden_size, data_off, enc_size, flags=0):
     struct.pack_into(">Q", h, 44, data_off)
     struct.pack_into(">Q", h, 52, enc_size)
     struct.pack_into(">I", h, 60, flags)
-    struct.pack_into(">I", h, 64, 512)
+    struct.pack_into(">I", h, 64, sector)  # TrueCrypt v4 has no sector-size field: 0
     struct.pack_into(">I", h, 188, zlib.crc32(bytes(h[0:188])) & 0xFFFFFFFF)  # CRC of bytes 64..251
     h[192:448] = master.ljust(256, b"\0")
     return bytes(h)
 
 
-def enc_header(salt, pw, prf, pim, plain):
-    iters = 500000 if pim == 0 else 15000 + pim * 1000
+def enc_header(salt, pw, prf, pim, plain, tc=False):
+    if tc:
+        assert pim == 0
+        iters = TC_ITER[prf]
+    else:
+        iters = 500000 if pim == 0 else 15000 + pim * 1000
     key = pbkdf2(prf, pw, salt, iters)
     return salt + xts(key, 0, plain)
 
 
-def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None, exfat=False):
+def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None, exfat=False, truecrypt=False, tc_version=5):
     """hidden = (pw, size, files) creates a hidden volume at the end of the outer data area."""
     rnd = lambda n: os.urandom(n)
+    tcargs = dict(magic=b"TRUE", version=tc_version, sector=(0 if tc_version < 5 else 512)) if truecrypt else {}
     img = bytearray(rnd(size))
     data_size = size - 2 * HDR
     master = rnd(64) + rnd(192)
@@ -101,20 +107,20 @@ def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None,
         hfs = fat_image(name + "-hidden", hsz, fat, hfiles)
         for u in range(hsz // 512):
             img[hdata_off + u * 512:hdata_off + (u + 1) * 512] = xts(hmaster[:64], hdata_off // 512 + u, hfs[u * 512:(u + 1) * 512])
-        hh = header(hmaster, hsz, hsz, hdata_off, hsz)
+        hh = header(hmaster, hsz, hsz, hdata_off, hsz, **tcargs)
         hsalt = rnd(64)
-        hblob = enc_header(hsalt, hpw.encode(), prf, 0, hh)
+        hblob = enc_header(hsalt, hpw.encode(), prf, 0, hh, truecrypt)
         img[65536:65536 + 512] = hblob
         img[size - 65536:size - 65536 + 512] = hblob
         hid_info = {"password": hpw, "size": hsz, "offset": hdata_off, "files": hashes(hfiles)}
-    ohdr = header(master, data_size, 0, HDR, data_size)
-    blob = enc_header(salt, pw_b, prf, pim, ohdr)
+    ohdr = header(master, data_size, 0, HDR, data_size, **tcargs)
+    blob = enc_header(salt, pw_b, prf, pim, ohdr, truecrypt)
     img[0:512] = blob
     img[size - HDR:size - HDR + 512] = blob
     path = os.path.join(OUT, name + ".hc")
     open(path, "wb").write(img)
     return {"file": name + ".hc", "password": pw, "prf": prf, "pim": pim, "keyfiles": [os.path.basename(k) for k in keyfiles],
-            "fat": ("exfat" if exfat else fat), "size": size, "files": expected_files if expected_files is not None else hashes(files or {}), "hidden": hid_info,
+            "fat": ("exfat" if exfat else fat), "mode": ("truecrypt" if truecrypt else "veracrypt"), "tc_version": tc_version if truecrypt else None, "size": size, "files": expected_files if expected_files is not None else hashes(files or {}), "hidden": hid_info,
             "master_key_hex": master[:64].hex()}
 
 
@@ -196,6 +202,10 @@ def main():
     cat["aes_sha512_keyfile"] = make("aes_sha512_keyfile", 5 * M, "test", keyfiles=[kf1, kf2], files=sample_files("e"))
     cat["unicode_pw"] = make("unicode_pw", 5 * M, "pässwörd✓", files=sample_files("f"))
     cat["fat16"] = make("fat16", 8 * M, "test", fat="16", files=sample_files("g"))
+    cat["tc_ripemd160"] = make("tc_ripemd160", 5 * M, "test", prf="ripemd160", files=sample_files("t1"), truecrypt=True, tc_version=5)
+    cat["tc_sha512_v4"] = make("tc_sha512_v4", 5 * M, "test", prf="sha512", files=sample_files("t2"), truecrypt=True, tc_version=4)
+    cat["tc_keyfile"] = make("tc_keyfile", 5 * M, "test", prf="ripemd160", keyfiles=[kf1], files=sample_files("t3"), truecrypt=True)
+    cat["tc_hidden"] = make("tc_hidden", 8 * M, "outer", prf="sha512", files=sample_files("t4o"), hidden=("inner", 3 * M, sample_files("t4i")), truecrypt=True)
     cat["aes_exfat"] = make("aes_exfat", 9 * M, "test", exfat=True)
     cat["fat32"] = make("fat32", 41 * M, "test", fat="32", files=sample_files("j"))
     cat["fat12"] = make("fat12", 2 * M, "test", fat="12", files=sample_files("h"))

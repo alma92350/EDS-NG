@@ -74,4 +74,13 @@ class CliTest {
             assertArrayEquals(src.readBytes(), back.out)
         } finally { tmp.delete(); src.delete() }
     }
+
+    @Test fun `truecrypt mode opens a truecrypt container and is refused for veracrypt ones`() {
+        val r = cli("info", c("tc_ripemd160.hc"), "--password-stdin", "--truecrypt")
+        assertEquals(0, r.code, r.err); assertTrue("format:     TrueCrypt" in r.text && "prf:        RIPEMD-160" in r.text, r.text)
+        assertEquals(1, cli("ls", c("tc_ripemd160.hc"), "--password-stdin").code)                    // VeraCrypt mode: generic failure
+        assertEquals(1, cli("ls", c("aes_sha512_fat.hc"), "--password-stdin", "--truecrypt").code)
+        assertEquals(1, cli("ls", c("tc_ripemd160.hc"), "--password-stdin", "--truecrypt", "--pim", "5").code)
+        assertEquals("hello t1\n", cli("cat", c("tc_ripemd160.hc"), "hello.txt", "--password-stdin", "--truecrypt").text)
+    }
 }

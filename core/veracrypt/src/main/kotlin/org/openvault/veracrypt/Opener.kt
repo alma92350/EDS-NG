@@ -4,6 +4,7 @@ import org.openvault.crypto.IterationPolicy
 import org.openvault.crypto.KeyfilePool
 import org.openvault.crypto.Pbkdf2
 import org.openvault.crypto.Prf
+import org.openvault.crypto.VolumeMode
 import org.openvault.crypto.XtsAes
 import org.openvault.io.RandomAccessStorage
 import java.io.InputStream
@@ -27,17 +28,19 @@ object VolumeOpener {
         password: ByteArray,
         pim: Int = 0,
         keyfiles: List<InputStream> = emptyList(),
-        prfs: List<Prf> = Prf.entries,
+        prfs: List<Prf>? = null,
         readOnly: Boolean = false,
         locations: Set<HeaderLocation> = HeaderLocation.entries.toSet(),
         cancelled: () -> Boolean = { false },
         progress: (done: Int, total: Int) -> Unit = { _, _ -> },
         parallelism: Int = Runtime.getRuntime().availableProcessors(),
+        mode: VolumeMode = VolumeMode.VERACRYPT,
     ): OpenResult {
+        val prfList = prfs ?: Prf.defaultFor(mode)
         val size = storage.size
         val mixed = if (keyfiles.isEmpty()) null else KeyfilePool.mix(password, keyfiles)
         val effective = mixed ?: password
-        val plan = HeaderSearchPlan.build(prfs).filter { it.location in locations }.filter { it.location.offset(size) >= 0 && it.location.offset(size) + 512 <= size }
+        val plan = HeaderSearchPlan.build(prfList).filter { it.location in locations }.filter { it.location.offset(size) >= 0 && it.location.offset(size) + 512 <= size }
         val raws = HeaderLocation.entries.filter { l -> plan.any { it.location == l } }.associateWith { l -> ByteArray(512).also { storage.read(l.offset(size), it) } }
         val stop = java.util.concurrent.atomic.AtomicBoolean(false)
         val pool = java.util.concurrent.Executors.newFixedThreadPool(maxOf(1, minOf(parallelism, plan.size.coerceAtLeast(1)))) { r -> Thread(r, "vc-kdf").apply { isDaemon = true } }
@@ -46,11 +49,11 @@ object VolumeOpener {
                 pool.submit<VolumeHeader?> {
                     if (stop.get() || cancelled()) return@submit null
                     val raw = raws.getValue(a.location)
-                    val key = Pbkdf2.derive(a.prf, effective, raw.copyOfRange(0, 64), IterationPolicy.iterations(a.prf, pim), 64)
+                    val key = Pbkdf2.derive(a.prf, effective, raw.copyOfRange(0, 64), IterationPolicy.iterations(a.prf, pim, mode), 64)
                     val plain = raw.copyOfRange(64, 512)
                     try {
                         XtsAes(key.copyOfRange(0, 32), key.copyOfRange(32, 64)).decrypt(plain, 0, plain.size, 0)
-                        HeaderParser.parse(plain, size)
+                        HeaderParser.parse(plain, size, mode)
                     } finally { key.fill(0); plain.fill(0) }
                 }
             }

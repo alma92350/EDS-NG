@@ -162,3 +162,35 @@ class ThroughputTest {
         }
     }
 }
+
+class TrueCryptVaultTest {
+    private val dir = File("../../testing/fixtures")
+    private val cat: JsonObject = JsonParser.parseString(File(dir, "fixtures.json").readText()).asJsonObject
+
+    @ParameterizedTest
+    @ValueSource(strings = ["tc_ripemd160", "tc_sha512_v4", "tc_keyfile", "tc_hidden"])
+    fun `truecrypt tree and hashes match through the full vault path`(name: String) {
+        val f = cat[name].asJsonObject
+        val kf = f["keyfiles"].asJsonArray.map { ByteArrayInputStream(File(dir, it.asString).readBytes()) }
+        val r = VaultOpener.open(MemoryStorage(File(dir, f["file"].asString).readBytes()), f["password"].asString.toByteArray(), 0, kf, mode = org.openvault.crypto.VolumeMode.TRUECRYPT) as VaultResult.Opened
+        r.fileSystem.use { fs ->
+            val seen = HashMap<String, String>()
+            fun walk(n: FsNode) { for (c in fs.list(n)) if (c.isDirectory) walk(c) else fs.open(c, OpenMode.READ).use { x -> val b = ByteArray(x.size.toInt()); var q = 0; while (q < b.size) q += x.read(q.toLong(), b, q, b.size - q)
+                seen[c.path.toString().removePrefix("/").lowercase()] = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) } } }
+            walk(fs.root())
+            assertEquals(f["files"].asJsonObject.entrySet().associate { it.key.lowercase() to it.value.asString }.toSortedMap(), seen.toSortedMap())
+        }
+    }
+
+    @Test fun `hidden protection works in truecrypt mode`() {
+        val f = cat["tc_hidden"].asJsonObject; val hid = f["hidden"].asJsonObject
+        val st = MemoryStorage(File(dir, f["file"].asString).readBytes())
+        val r = VaultOpener.open(st, "outer".toByteArray(), readOnly = false, mode = org.openvault.crypto.VolumeMode.TRUECRYPT,
+            hiddenProtection = HiddenProtection(hid["password"].asString.toByteArray())) as VaultResult.Opened
+        assertNotNull(r.protection)
+        val big = ByteArray(6 * 1024 * 1024)
+        assertThrows(org.openvault.veracrypt.HiddenVolumeProtectionException::class.java) {
+            r.fileSystem.open(r.fileSystem.createFile(r.fileSystem.root(), "big.bin"), OpenMode.READ_WRITE).use { x -> var p = 0L; while (p < big.size) { x.write(p, big, p.toInt(), 65536); p += 65536 } }
+        }
+    }
+}

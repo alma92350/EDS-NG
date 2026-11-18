@@ -1,6 +1,7 @@
 package org.openvault.vault
 
 import org.openvault.crypto.Prf
+import org.openvault.crypto.VolumeMode
 import org.openvault.fs.FileSystem
 import org.openvault.fs.UnsupportedFilesystemException
 import org.openvault.fs.exfat.ExfatFileSystem
@@ -40,11 +41,12 @@ internal fun detect(device: BlockDevice, readOnly: Boolean): FileSystem {
 object VaultOpener {
     fun open(
         storage: RandomAccessStorage, password: ByteArray, pim: Int = 0, keyfiles: List<InputStream> = emptyList(),
-        prfs: List<Prf> = Prf.entries, readOnly: Boolean = true, hiddenProtection: HiddenProtection? = null,
+        prfs: List<Prf>? = null, readOnly: Boolean = true, hiddenProtection: HiddenProtection? = null,
         cancelled: () -> Boolean = { false }, progress: (Int, Int) -> Unit = { _, _ -> },
+        mode: VolumeMode = VolumeMode.VERACRYPT,
     ): VaultResult {
         val locations = if (hiddenProtection != null) setOf(HeaderLocation.NORMAL, HeaderLocation.BACKUP_NORMAL) else HeaderLocation.entries.toSet()
-        val r = VolumeOpener.open(storage, password, pim, keyfiles, prfs, readOnly, locations, cancelled, progress)
+        val r = VolumeOpener.open(storage, password, pim, keyfiles, prfs, readOnly, locations, cancelled, progress, mode = mode)
         return when (r) {
             is OpenResult.Cancelled -> VaultResult.Cancelled
             is OpenResult.Failed -> VaultResult.Failed(r.tried)
@@ -52,7 +54,7 @@ object VaultOpener {
                 var device: BlockDevice = r.volume; var protection: ProtectedRangeBlockDevice? = null
                 if (hiddenProtection != null && !readOnly) {
                     val h = VolumeOpener.open(NonClosingStorage(storage), hiddenProtection.password, hiddenProtection.pim, hiddenProtection.keyfiles, prfs, true,
-                        setOf(HeaderLocation.HIDDEN, HeaderLocation.BACKUP_HIDDEN), cancelled, progress)
+                        setOf(HeaderLocation.HIDDEN, HeaderLocation.BACKUP_HIDDEN), cancelled, progress, mode = mode)
                     if (h !is OpenResult.Opened) { r.volume.close(); return VaultResult.HiddenProtectionFailed }
                     val hh = h.volume.header; h.volume.close()
                     val first = (hh.dataOffset - r.volume.header.dataOffset) / r.volume.sectorSize
