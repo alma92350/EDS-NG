@@ -14,12 +14,12 @@ import java.io.PrintStream
 import java.io.RandomAccessFile
 
 /** Desktop debugging CLI (PRD §4.2). Read-only. Never prints secrets. */
-class FileRandomAccessStorage(file: File) : RandomAccessStorage {
-    private val raf = RandomAccessFile(file, "r")
+class FileRandomAccessStorage(file: File, writable: Boolean = false) : RandomAccessStorage {
+    private val raf = RandomAccessFile(file, if (writable) "rw" else "r")
     override val size get() = raf.length()
-    override val isReadOnly = true
+    override val isReadOnly = !writable
     override fun read(position: Long, dst: ByteArray, off: Int, len: Int) { checkRange(position, off, len, dst.size, size); raf.seek(position); raf.readFully(dst, off, len) }
-    override fun write(position: Long, src: ByteArray, off: Int, len: Int) = throw java.io.IOException("read-only")
+    override fun write(position: Long, src: ByteArray, off: Int, len: Int) { if (isReadOnly) throw java.io.IOException("read-only"); checkRange(position, off, len, src.size, size); raf.seek(position); raf.write(src, off, len) }
     override fun flush() {}
     override fun close() = raf.close()
 }
@@ -30,10 +30,12 @@ commands:
   ls    <container> [path]       list a directory
   cat   <container> <path>       write a file to stdout
   get   <container> <path> <dst> copy a file out (UNENCRYPTED copy!)
+  put   <container> <src> <path> copy a local file in (needs --rw)
 options:
   --password-stdin   read the password from the first line of stdin (preferred)
   -p <password>      password on the command line (visible in process list!)
   -k <keyfile>       keyfile (repeatable)
+  --rw               open read-write (default is read-only)
   --pim <n>          personal iterations multiplier
   --prf <name>       sha512|sha256|blake2s|whirlpool|streebog (default: auto-detect)
 """
@@ -43,12 +45,13 @@ fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStr
     try {
         if (args.size < 2 || args[0] in setOf("-h", "--help")) { err.print(USAGE); return 2 }
         val cmd = args[0]; val container = File(args[1])
-        val pos = ArrayList<String>(); var pw: String? = null; var pwStdin = false; var pim = 0
+        val pos = ArrayList<String>(); var pw: String? = null; var pwStdin = false; var pim = 0; var rw = false
         val kfs = ArrayList<File>(); var prfs: List<Prf> = Prf.entries
         var i = 2
         while (i < args.size) {
             when (val a = args[i]) {
                 "--password-stdin" -> pwStdin = true
+                "--rw" -> rw = true
                 "-p" -> pw = args.getOrNull(++i) ?: return fail(err, "missing value for -p")
                 "-k" -> kfs += File(args.getOrNull(++i) ?: return fail(err, "missing value for -k"))
                 "--pim" -> pim = args.getOrNull(++i)?.toIntOrNull() ?: return fail(err, "invalid --pim")
@@ -57,17 +60,18 @@ fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStr
             }
             i++
         }
-        if (cmd !in setOf("info", "ls", "cat", "get")) return fail(err, "unknown command: $cmd")
+        if (cmd !in setOf("info", "ls", "cat", "get", "put")) return fail(err, "unknown command: $cmd")
         if (!container.isFile) return fail(err, "no such file: $container")
         if (pwStdin) pw = generateSequence { stdin.read().takeIf { it >= 0 && it != '\n'.code } }.toList().let { String(ByteArray(it.size) { k -> it[k].toByte() }, Charsets.UTF_8) }.trimEnd('\r')
         if (pw == null) return fail(err, "no password: use --password-stdin or -p")
         val password = pw.toByteArray(Charsets.UTF_8)
         val result = try {
-            VaultOpener.open(FileRandomAccessStorage(container), password, pim, kfs.map { it.inputStream().buffered() }, prfs)
+            VaultOpener.open(FileRandomAccessStorage(container, rw), password, pim, kfs.map { it.inputStream().buffered() }, prfs, readOnly = !rw)
         } finally { password.fill(0) }
         when (result) {
             is VaultResult.Failed -> return fail(err, "Incorrect password, PIM, keyfiles or unsupported settings")
             is VaultResult.Cancelled -> return fail(err, "cancelled")
+            is VaultResult.HiddenProtectionFailed -> return fail(err, "hidden volume protection failed")
             is VaultResult.UnsupportedFilesystem -> return fail(err, "Unsupported filesystem (${result.kind})")
             is VaultResult.Opened -> result.fileSystem.use { fs -> return execute(cmd, pos, result, fs, o, out, err) }
         }
@@ -92,6 +96,17 @@ private fun execute(cmd: String, pos: List<String>, r: VaultResult.Opened, fs: F
             val dir = fs.resolve(FsPath.parse(pos.getOrElse(0) { "/" }))
             for (n in fs.list(dir).sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })))
                 o.println("${if (n.isDirectory) "d" else "-"} ${n.size.toString().padStart(10)} ${n.modified?.toString()?.take(19)?.replace('T', ' ') ?: "-".padEnd(19)} ${n.name}${if (n.isDirectory) "/" else ""}")
+        }
+        "put" -> {
+            if (fs.isReadOnly) return fail(err, "container opened read-only: pass --rw")
+            if (pos.size < 2) return fail(err, "usage: put <container> <src> <path>")
+            val dst = FsPath.parse(pos[1]); val src = File(pos[0])
+            if (!src.isFile) return fail(err, "no such file: $src")
+            val parent = fs.resolve(dst.parent)
+            val node = try { fs.resolve(dst) } catch (e: FsNotFoundException) { fs.createFile(parent, dst.name) }
+            fs.open(node, OpenMode.READ_WRITE).use { f -> f.truncate(0); src.inputStream().use { i -> val buf = ByteArray(64 * 1024); var p = 0L
+                while (true) { val n = i.read(buf); if (n < 0) break; f.write(p, buf, 0, n); p += n } } }
+            fs.sync()
         }
         "cat", "get" -> {
             if (pos.isEmpty() || (cmd == "get" && pos.size < 2)) return fail(err, "missing path argument")

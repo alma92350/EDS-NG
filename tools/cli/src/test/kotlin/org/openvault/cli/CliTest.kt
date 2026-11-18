@@ -63,4 +63,15 @@ class CliTest {
         assertEquals(1, cli("frobnicate", c("aes_sha512_fat.hc")).code)
         assertEquals(1, cli("ls", c("aes_sha512_fat.hc")).code) // no password given
     }
+
+    @Test fun `put writes a file that reads back, only with --rw`() {
+        val tmp = File.createTempFile("ovput", ".hc"); File(dir, "aes_sha512_fat.hc").copyTo(tmp, overwrite = true)
+        val src = File.createTempFile("ovsrc", ".bin"); src.writeBytes(ByteArray(40_000) { (it * 5).toByte() })
+        try {
+            assertEquals(1, cli("put", tmp.path, src.path, "/docs/new.bin", "--password-stdin", "--prf", "sha512").code) // read-only by default
+            assertEquals(0, cli("put", tmp.path, src.path, "/docs/new.bin", "--password-stdin", "--prf", "sha512", "--rw").also { assertEquals("", it.err) }.code)
+            val back = cli("cat", tmp.path, "/docs/new.bin", "--password-stdin", "--prf", "sha512")
+            assertArrayEquals(src.readBytes(), back.out)
+        } finally { tmp.delete(); src.delete() }
+    }
 }

@@ -28,13 +28,14 @@ object VolumeOpener {
         keyfiles: List<InputStream> = emptyList(),
         prfs: List<Prf> = Prf.entries,
         readOnly: Boolean = false,
+        locations: Set<HeaderLocation> = HeaderLocation.entries.toSet(),
         cancelled: () -> Boolean = { false },
         progress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): OpenResult {
         val size = storage.size
         val effective = KeyfilePool.mix(password, keyfiles)
             .let { if (keyfiles.isEmpty()) password else it }
-        val plan = HeaderSearchPlan.build(prfs).filter { it.location.offset(size) >= 0 && it.location.offset(size) + 512 <= size }
+        val plan = HeaderSearchPlan.build(prfs).filter { it.location in locations }.filter { it.location.offset(size) >= 0 && it.location.offset(size) + 512 <= size }
         val raw = ByteArray(512)
         val tried = ArrayList<Attempt>()
         try {

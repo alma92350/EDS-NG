@@ -54,7 +54,7 @@ class FatReadTest {
     }
 
     @Test fun `mutations are refused`() {
-        FatFileSystem(ImageDevice(Fixtures.image("plain_fat16"))).use { fs ->
+        FatFileSystem(ImageDevice(Fixtures.image("plain_fat16")), readOnly = true).use { fs ->
             assertTrue(fs.isReadOnly)
             assertThrows(FsReadOnlyException::class.java) { fs.createFile(fs.root(), "x") }
             assertThrows(FsReadOnlyException::class.java) { fs.open(fs.resolve(FsPath.parse("hello.txt")), OpenMode.READ_WRITE) }

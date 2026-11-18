@@ -73,3 +73,57 @@ class VaultOpenerTest {
         (open("aes_sha512_fat") as VaultResult.Opened).let { it.fileSystem.use { fs -> assertTrue(fs.isReadOnly); assertTrue(it.volume.isReadOnly) } }
     }
 }
+
+/** B1: writing to the outer volume must not destroy the hidden volume when protection is on. */
+class HiddenProtectionTest {
+    private val dir = File("../../testing/fixtures")
+    private val cat: JsonObject = JsonParser.parseString(File(dir, "fixtures.json").readText()).asJsonObject["hidden"].asJsonObject
+    private val hid = cat["hidden"].asJsonObject
+    private fun storage() = MemoryStorage(File(dir, cat["file"].asString).readBytes())
+    private val big = ByteArray(6 * 1024 * 1024) { (it * 31).toByte() } // outer data area is ~7.75 MiB, hidden occupies the top 3 MiB
+
+    private fun fill(fs: FileSystem) {
+        val n = fs.createFile(fs.root(), "big.bin")
+        fs.open(n, OpenMode.READ_WRITE).use { f -> var pos = 0L; while (pos < big.size) { val len = minOf(65536, (big.size - pos).toInt()); f.write(pos, big, pos.toInt(), len); pos += len } }
+    }
+
+    private fun hiddenIntact(st: MemoryStorage): Boolean {
+        val r = VaultOpener.open(st, hid["password"].asString.toByteArray(), prfs = listOf(Prf.SHA512))
+        if (r !is VaultResult.Opened) return false
+        return r.fileSystem.use { fs ->
+            hid["files"].asJsonObject.entrySet().all { (p, h) -> fs.open(fs.resolve(FsPath.parse(p)), OpenMode.READ).use { f ->
+                val b = ByteArray(f.size.toInt()); var q = 0; while (q < b.size) q += f.read(q.toLong(), b, q, b.size - q)
+                MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) } == h.asString } }
+        }
+    }
+
+    @Test fun `with protection the oversized write is refused and the hidden volume survives`() {
+        val st = storage()
+        val r = VaultOpener.open(st, "outer".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false,
+            hiddenProtection = HiddenProtection(hid["password"].asString.toByteArray())) as VaultResult.Opened
+        assertNotNull(r.protection)
+        assertThrows(org.openvault.veracrypt.HiddenVolumeProtectionException::class.java) { fill(r.fileSystem) }
+        assertTrue(r.protection!!.violated)
+        assertTrue(hiddenIntact(MemoryStorage(st.bytes)), "hidden volume must be untouched")
+    }
+
+    @Test fun `without protection the same write destroys the hidden volume (why B1 matters)`() {
+        val st = storage()
+        val r = VaultOpener.open(st, "outer".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false) as VaultResult.Opened
+        fill(r.fileSystem); r.fileSystem.sync()
+        assertFalse(hiddenIntact(MemoryStorage(st.bytes)))
+    }
+
+    @Test fun `small writes with protection work normally`() {
+        val st = storage()
+        val r = VaultOpener.open(st, "outer".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false,
+            hiddenProtection = HiddenProtection(hid["password"].asString.toByteArray())) as VaultResult.Opened
+        r.fileSystem.use { fs -> val n = fs.createFile(fs.root(), "new.txt"); fs.open(n, OpenMode.READ_WRITE).use { it.write(0, byteArrayOf(1, 2, 3), 0, 3) } }
+        assertTrue(hiddenIntact(MemoryStorage(st.bytes)))
+    }
+
+    @Test fun `wrong hidden password fails the open`() {
+        val r = VaultOpener.open(storage(), "outer".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false, hiddenProtection = HiddenProtection("nope".toByteArray()))
+        assertTrue(r is VaultResult.HiddenProtectionFailed)
+    }
+}

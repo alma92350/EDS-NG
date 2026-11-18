@@ -8,7 +8,12 @@ import java.time.ZoneId
 class DirEntry(
     val name: String, val shortName: String, val isDirectory: Boolean, val size: Long, val firstCluster: Long,
     val modified: Instant?, val created: Instant?,
-)
+    /** Byte offset in the parent directory stream of the first (LFN) entry and of the short entry. */
+    val startOffset: Int = 0, val shortOffset: Int = 0, val attr: Int = 0,
+) {
+    /** Directory stream this entry lives in: 0 = fixed FAT12/16 root, else first cluster. Set by the driver. */
+    var parentFirst: Long = -1
+}
 
 object DirParser {
     private fun u16(b: ByteArray, o: Int) = (b[o].toInt() and 0xff) or ((b[o + 1].toInt() and 0xff) shl 8)
@@ -31,7 +36,7 @@ object DirParser {
     /** Parses a raw directory byte stream. Stops at the first 0x00 entry. Orphan/invalid LFN sets fall back to the short name. */
     fun parse(raw: ByteArray, zone: ZoneId = ZoneId.systemDefault()): List<DirEntry> {
         val out = ArrayList<DirEntry>()
-        var lfn = StringBuilder(); var lfnSum = -1; var expectedSeq = 0; var lfnValid = false
+        var lfn = StringBuilder(); var lfnSum = -1; var expectedSeq = 0; var lfnValid = false; var lfnStart = -1
         var o = 0
         while (o + 32 <= raw.size) {
             val first = raw[o].toInt() and 0xff
@@ -40,7 +45,7 @@ object DirParser {
             if (first == 0xE5) { lfnValid = false; o += 32; continue }
             if (attr == 0x0F) {
                 val seq = first and 0x3f
-                if (first and 0x40 != 0) { lfn = StringBuilder(); expectedSeq = seq; lfnSum = raw[o + 13].toInt() and 0xff; lfnValid = true }
+                if (first and 0x40 != 0) { lfn = StringBuilder(); expectedSeq = seq; lfnSum = raw[o + 13].toInt() and 0xff; lfnValid = true; lfnStart = o }
                 else if (!lfnValid || seq != expectedSeq - 1 || (raw[o + 13].toInt() and 0xff) != lfnSum) { lfnValid = false }
                 if (lfnValid) {
                     expectedSeq = seq
@@ -57,17 +62,19 @@ object DirParser {
             val base = String(nameBytes, 0, 8, Charsets.ISO_8859_1).trimEnd().let { if (ntFlags and 0x08 != 0) it.lowercase() else it }
             val ext = String(nameBytes, 8, 3, Charsets.ISO_8859_1).trimEnd().let { if (ntFlags and 0x10 != 0) it.lowercase() else it }
             val short = if (ext.isEmpty()) base else "$base.$ext"
-            var name = short
+            var name = short; var usedLfn = false
             if (lfnValid && expectedSeq == 1 && lfnChecksum(raw.copyOfRange(o, o + 11)) == lfnSum) {
                 val s = lfn.toString(); val end = s.indexOf('\u0000')
                 name = (if (end >= 0) s.substring(0, end) else s).takeIf { it.isNotEmpty() } ?: short
+                usedLfn = name != short
             }
             lfnValid = false
             o.let {
                 if (short != "." && short != "..") {
                     val cluster = u16(raw, it + 26).toLong() or (u16(raw, it + 20).toLong() shl 16)
                     out += DirEntry(name, short, attr and 0x10 != 0, if (attr and 0x10 != 0) 0 else u32(raw, it + 28), cluster,
-                        fatTime(u16(raw, it + 24), u16(raw, it + 22), zone), fatTime(u16(raw, it + 16), u16(raw, it + 14), zone))
+                        fatTime(u16(raw, it + 24), u16(raw, it + 22), zone), fatTime(u16(raw, it + 16), u16(raw, it + 14), zone),
+                        if (name != short && lfnStart >= 0 && usedLfn) lfnStart else it, it, attr)
                 }
             }
             o += 32
