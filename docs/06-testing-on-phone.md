@@ -4,6 +4,8 @@
 (no Compose/AndroidX). It uses the same JVM core that is covered by 228 automated tests, but **the app layer itself has
 never been run on a device or emulator** (none was available when it was built). Expect rough edges.
 
+**Download:** https://github.com/alma92350/EDS-NG/raw/claude/dreamy-gates-pn6dzv/app/dist/openvault-0.1.0-test.apk  (QR code: `docs/apk-qr.png`)
+
 ## Install
 1. Copy `openvault-0.1.0-test.apk` to the phone, open it, allow "install unknown apps" for your file manager/browser.
 2. No permissions are requested (no network, no storage); the app only touches files you pick in the system file picker.
