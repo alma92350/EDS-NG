@@ -78,4 +78,12 @@ class DesktopLogicTest {
         s.lock(); assertTrue(s.locked)
         assertThrows(java.io.IOException::class.java) { s.sync { it.root() } }
     }
+
+    @Test fun `ntfs container opened read-write is forced read-only with a notice`(@TempDir t: Path) {
+        val f = copy("aes_ntfs", t)
+        val o = Unlocker.open(req("aes_ntfs", f, readOnly = false)) as UnlockOutcome.Opened
+        assertTrue(o.session.readOnly, "NTFS sessions must report read-only so the UI hides write actions")
+        assertNotNull(o.warning); assertTrue(o.warning!!.contains("read-only"))
+        assertEquals("VAULT", o.session.sync { it.label }); o.session.lock()
+    }
 }

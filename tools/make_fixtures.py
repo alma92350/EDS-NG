@@ -76,7 +76,7 @@ def enc_header(salt, pw, prf, pim, plain, tc=False):
     return salt + xts(key, 0, plain)
 
 
-def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None, exfat=False, truecrypt=False, tc_version=5):
+def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None, exfat=False, truecrypt=False, tc_version=5, ntfs=False):
     """hidden = (pw, size, files) creates a hidden volume at the end of the outer data area."""
     rnd = lambda n: os.urandom(n)
     tcargs = dict(magic=b"TRUE", version=tc_version, sector=(0 if tc_version < 5 else 512)) if truecrypt else {}
@@ -86,7 +86,13 @@ def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None,
     mkey = master[:64]
     # --- inner plain FAT image for the outer volume
     expected_files = None
-    if exfat:
+    if ntfs:
+        sys.path.insert(0, os.path.dirname(__file__))
+        import make_ntfs, tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "n.img"); raw = make_ntfs.build(p, data_size, 4096, "VAULT", small=True)
+            expected_files = {k: v["sha256"] for k, v in raw.items()}; outer_fs = open(p, "rb").read()
+    elif exfat:
         sys.path.insert(0, os.path.dirname(__file__))
         import make_exfat, tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -120,7 +126,7 @@ def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None,
     path = os.path.join(OUT, name + ".hc")
     open(path, "wb").write(img)
     return {"file": name + ".hc", "password": pw, "prf": prf, "pim": pim, "keyfiles": [os.path.basename(k) for k in keyfiles],
-            "fat": ("exfat" if exfat else fat), "mode": ("truecrypt" if truecrypt else "veracrypt"), "tc_version": tc_version if truecrypt else None, "size": size, "files": expected_files if expected_files is not None else hashes(files or {}), "hidden": hid_info,
+            "fat": ("ntfs" if ntfs else ("exfat" if exfat else fat)), "mode": ("truecrypt" if truecrypt else "veracrypt"), "tc_version": tc_version if truecrypt else None, "size": size, "files": expected_files if expected_files is not None else hashes(files or {}), "hidden": hid_info,
             "master_key_hex": master[:64].hex()}
 
 
@@ -206,6 +212,7 @@ def main():
     cat["tc_sha512_v4"] = make("tc_sha512_v4", 5 * M, "test", prf="sha512", files=sample_files("t2"), truecrypt=True, tc_version=4)
     cat["tc_keyfile"] = make("tc_keyfile", 5 * M, "test", prf="ripemd160", keyfiles=[kf1], files=sample_files("t3"), truecrypt=True)
     cat["tc_hidden"] = make("tc_hidden", 8 * M, "outer", prf="sha512", files=sample_files("t4o"), hidden=("inner", 3 * M, sample_files("t4i")), truecrypt=True)
+    cat["aes_ntfs"] = make("aes_ntfs", 12 * M, "test", ntfs=True)
     cat["aes_exfat"] = make("aes_exfat", 9 * M, "test", exfat=True)
     cat["fat32"] = make("fat32", 41 * M, "test", fat="32", files=sample_files("j"))
     cat["fat12"] = make("fat12", 2 * M, "test", fat="12", files=sample_files("h"))

@@ -18,10 +18,12 @@ jobs:
       - name: Tools for fixtures and oracles (mkfs.fat, mtools, fsck.fat, exfatprogs)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q dosfstools mtools exfatprogs
+          sudo apt-get install -y -q dosfstools mtools exfatprogs ntfs-3g attr fuse3
+          sudo chmod 666 /dev/fuse
           pip install cryptography
       - name: Generate fixtures
         run: |
+          python3 tools/make_ntfs.py
           python3 tools/make_fixtures.py
           python3 tools/make_exfat.py
       - name: JVM tests (Maven)

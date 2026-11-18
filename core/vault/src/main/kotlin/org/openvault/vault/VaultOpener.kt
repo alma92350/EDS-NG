@@ -6,6 +6,7 @@ import org.openvault.fs.FileSystem
 import org.openvault.fs.UnsupportedFilesystemException
 import org.openvault.fs.exfat.ExfatFileSystem
 import org.openvault.fs.fat.FatFileSystem
+import org.openvault.fs.ntfs.NtfsFileSystem
 import org.openvault.io.RandomAccessStorage
 import org.openvault.io.BlockDevice
 import org.openvault.veracrypt.Attempt
@@ -31,10 +32,14 @@ sealed interface VaultResult {
     object Cancelled : VaultResult
 }
 
-/** Filesystem auto-detect (FR-U8): exFAT by OEM name, otherwise FAT; NTFS/unknown surface as [UnsupportedFilesystemException]. */
+/** Filesystem auto-detect (FR-U8): exFAT and NTFS by OEM name (NTFS is read-only), otherwise FAT; unknown surfaces as [UnsupportedFilesystemException]. */
 internal fun detect(device: BlockDevice, readOnly: Boolean): FileSystem {
     val boot = ByteArray(device.sectorSize); device.readSectors(0, boot, 0, 1)
-    return if (ExfatFileSystem.matches(boot)) ExfatFileSystem(device) else FatFileSystem(device, readOnly = readOnly)
+    return when {
+        ExfatFileSystem.matches(boot) -> ExfatFileSystem(device)
+        NtfsFileSystem.matches(boot) -> NtfsFileSystem(device)
+        else -> FatFileSystem(device, readOnly = readOnly)
+    }
 }
 
 /** storage -> VeraCrypt volume -> filesystem auto-detect (PRD §4.1 `:core:vault`). */

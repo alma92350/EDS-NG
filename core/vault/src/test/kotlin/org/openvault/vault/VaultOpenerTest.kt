@@ -194,3 +194,21 @@ class TrueCryptVaultTest {
         }
     }
 }
+
+class NtfsInVaultTest {
+    @Test fun `ntfs inside a veracrypt container is auto-detected and read-only`() {
+        val dir = File("../../testing/fixtures")
+        val f = JsonParser.parseString(File(dir, "fixtures.json").readText()).asJsonObject["aes_ntfs"].asJsonObject
+        val r = VaultOpener.open(MemoryStorage(File(dir, f["file"].asString).readBytes()), "test".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false) as VaultResult.Opened
+        r.fileSystem.use { fs ->
+            assertTrue(fs is org.openvault.fs.ntfs.NtfsFileSystem); assertTrue(fs.isReadOnly, "NTFS is always read-only")
+            assertEquals("VAULT", fs.label)
+            val seen = HashMap<String, String>()
+            fun walk(n: FsNode) { for (c in fs.list(n)) if (c.isDirectory) walk(c) else fs.open(c, OpenMode.READ).use { x -> val b = ByteArray(x.size.toInt()); var q = 0; while (q < b.size) q += x.read(q.toLong(), b, q, b.size - q)
+                seen[c.path.toString().removePrefix("/")] = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) } } }
+            walk(fs.root())
+            assertEquals(f["files"].asJsonObject.entrySet().associate { it.key to it.value.asString }.toSortedMap(), seen.toSortedMap())
+            assertThrows(org.openvault.fs.FsReadOnlyException::class.java) { fs.createFile(fs.root(), "x") }
+        }
+    }
+}

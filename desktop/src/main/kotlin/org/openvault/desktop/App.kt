@@ -27,7 +27,7 @@ class MainWindow : JFrame("OpenVault") {
         }
         val top = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS); border = BorderFactory.createEmptyBorder(10, 10, 6, 10)
-            add(JLabel("<html><b>Open a VeraCrypt or TrueCrypt container file</b> (FAT12/16/32 or exFAT, AES).<br>Only its path is remembered, never passwords.</html>").apply { alignmentX = 0f })
+            add(JLabel("<html><b>Open a VeraCrypt or TrueCrypt container file</b> (FAT12/16/32, exFAT or NTFS read-only; AES).<br>Only its path is remembered, never passwords.</html>").apply { alignmentX = 0f })
             add(Box.createVerticalStrut(8))
             add(JPanel().apply { alignmentX = 0f; layout = BoxLayout(this, BoxLayout.X_AXIS)
                 add(JButton("Open container…").apply { addActionListener { chooseContainer() } }); add(Box.createHorizontalStrut(8))

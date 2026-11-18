@@ -39,3 +39,15 @@ Android "TrueCrypt mode" checkbox); a container is never auto-detected as TrueCr
 NOT supported: Serpent/Twofish/cascades, LRW/CBC (TrueCrypt < 5), header versions < 4, SHA-1.
 Caveats: the iteration counts, header versions and v4 "sector size 0" handling come from the TrueCrypt documentation as remembered
 and from our own generator; no real TrueCrypt container has been tested yet. If a real container fails, report its TrueCrypt version and cipher.
+
+## NTFS support (added on request, 2026-11-18) - READ-ONLY
+`core:fs-ntfs`, clean-room from the public NTFS format documentation. Supports: boot sector, MFT record fixups, attributes,
+`$ATTRIBUTE_LIST` + extension records, data runs (fragmented, sparse), resident/non-resident data, `$INDEX_ROOT`/`$INDEX_ALLOCATION`
+B-tree directories (tested with a 400-entry directory), Unicode/long names, DOS 8.3 aliases and system metafiles hidden,
+case-insensitive lookup via `$UpCase`, label and free space. Auto-detected by the OEM name `NTFS    `.
+NOT supported: writing (journal/dirty-flag safety is a different order of risk), compressed files and EFS-encrypted files
+(typed `FsException`, other files stay readable), reparse-point semantics, alternate data streams, sparse-compressed volumes.
+Tests: contract suite whose file contents come from `ntfscat` (independent implementation), 1213-file trees on 4 KB- and 512-byte-cluster
+images, free space equal to `ntfsinfo`, torn-record and 30 random-corruption runs (only `FsException` allowed), NTFS inside a VeraCrypt container.
+Test images are built with `mkntfs` + an ntfs-3g FUSE mount (`tools/make_ntfs.py`); those GPL tools are test oracles only and are never shipped.
+Caveat: images come from ntfs-3g, not Windows; real Windows volumes (junctions, EFS, USN journal, dedup, ReFS-style quirks) are untested.

@@ -148,12 +148,13 @@ class MainActivity : Activity() {
                     is VaultResult.Opened -> {
                         if (r.usedBackupHeader) toast("Primary header damaged, opened with backup header")
                         if (wroteRo && !readOnly) toast("Write access was refused by the provider: opened read-only")
-                        Vault.start(rec.name, r.fileSystem, wroteRo, r.protection)
+                        if (!wroteRo && r.fileSystem.isReadOnly) toast("This filesystem is read-only in this version (NTFS/exFAT)")
+                        Vault.start(rec.name, r.fileSystem, wroteRo || r.fileSystem.isReadOnly, r.protection)
                         startActivity(Intent(this, BrowserActivity::class.java))
                     }
                     is VaultResult.Failed -> fail("Incorrect password, PIM, keyfiles or unsupported settings." + if (truecrypt) "\n\nTrueCrypt mode: RIPEMD-160, SHA-512 and Whirlpool were tried (AES only; no PIM). If this is a VeraCrypt container, untick TrueCrypt mode." else if (!all) "\n\nOnly SHA-512, SHA-256 and BLAKE2s were tried. Tick \"Try all hash algorithms\" for Whirlpool or Streebog, or \"TrueCrypt mode\" for old TrueCrypt containers." else "")
                     is VaultResult.HiddenProtectionFailed -> fail("The hidden volume password did not match, so protection could not be enabled.")
-                    is VaultResult.UnsupportedFilesystem -> fail("Unsupported filesystem (${r.kind}). This version reads FAT12/16/32 and exFAT.")
+                    is VaultResult.UnsupportedFilesystem -> fail("Unsupported filesystem (${r.kind}). This version reads FAT12/16/32, exFAT and NTFS (read-only).")
                     is VaultResult.Cancelled -> toast("Cancelled")
                     null -> fail(error ?: "Could not open the container")
                 }

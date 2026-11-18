@@ -35,7 +35,7 @@ android {
     sourceSets.getByName("main") {
         java.srcDirs(
             "../core/io/src/main/kotlin", "../core/crypto/src/main/kotlin", "../core/veracrypt/src/main/kotlin",
-            "../core/fs-api/src/main/kotlin", "../core/fs-fat/src/main/kotlin", "../core/fs-exfat/src/main/kotlin",
+            "../core/fs-api/src/main/kotlin", "../core/fs-fat/src/main/kotlin", "../core/fs-exfat/src/main/kotlin", "../core/fs-ntfs/src/main/kotlin",
             "../core/vault/src/main/kotlin", "../app/src/main/kotlin",
         )
         res.srcDirs("../app/src/main/res")

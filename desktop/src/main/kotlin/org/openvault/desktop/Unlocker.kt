@@ -47,15 +47,15 @@ object Unlocker {
             kfs.forEach { it.fill(0) }
             return when (r) {
                 is VaultResult.Opened -> {
-                    val note = listOfNotNull(warning, if (r.usedBackupHeader) "Primary header damaged, opened with backup header" else null).joinToString("\n").ifEmpty { null }
-                    UnlockOutcome.Opened(DesktopSession(req.file.name, r.fileSystem, readOnly, r.protection, r.isHidden), note).also { storage = null }
+                    val note = listOfNotNull(warning, if (!readOnly && r.fileSystem.isReadOnly) "This filesystem is read-only in this version (NTFS/exFAT): write actions are disabled." else null, if (r.usedBackupHeader) "Primary header damaged, opened with backup header" else null).joinToString("\n").ifEmpty { null }
+                    UnlockOutcome.Opened(DesktopSession(req.file.name, r.fileSystem, readOnly || r.fileSystem.isReadOnly, r.protection, r.isHidden), note).also { storage = null }
                 }
                 is VaultResult.Failed -> UnlockOutcome.Failed(GENERIC_FAILURE + when {
                     req.truecrypt -> "\n\nTrueCrypt mode: RIPEMD-160, SHA-512 and Whirlpool were tried (AES only, no PIM)."
                     !req.tryAllHashes -> "\n\nOnly SHA-512, SHA-256 and BLAKE2s were tried; enable \"try all hash algorithms\" for Whirlpool/Streebog, or TrueCrypt mode for old containers."
                     else -> "" })
                 is VaultResult.HiddenProtectionFailed -> UnlockOutcome.Failed("The hidden volume password did not match, so protection could not be enabled.")
-                is VaultResult.UnsupportedFilesystem -> UnlockOutcome.Failed("Unsupported filesystem (${r.kind}). This version reads FAT12/16/32 and exFAT.")
+                is VaultResult.UnsupportedFilesystem -> UnlockOutcome.Failed("Unsupported filesystem (${r.kind}). This version reads FAT12/16/32, exFAT and NTFS.")
                 is VaultResult.Cancelled -> UnlockOutcome.Cancelled
             }
         } catch (e: Exception) {

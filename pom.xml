@@ -15,6 +15,7 @@
     <module>core/fs-api</module>
     <module>core/fs-fat</module>
     <module>core/fs-exfat</module>
+    <module>core/fs-ntfs</module>
     <module>core/vault</module>
     <module>tools/cli</module>
     <module>desktop</module>
@@ -75,6 +76,7 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
+        <configuration><environmentVariables><LC_ALL>C.UTF-8</LC_ALL></environmentVariables><argLine>-Dfile.encoding=UTF-8</argLine></configuration>
       </plugin>
     </plugins>
   </build>
