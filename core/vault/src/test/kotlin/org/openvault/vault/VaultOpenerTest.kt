@@ -127,3 +127,38 @@ class HiddenProtectionTest {
         assertTrue(r is VaultResult.HiddenProtectionFailed)
     }
 }
+
+class ExfatInVaultTest {
+    @Test fun `exfat inside a veracrypt container is auto-detected and read`() {
+        val dir = File("../../testing/fixtures")
+        val f = JsonParser.parseString(File(dir, "fixtures.json").readText()).asJsonObject["aes_exfat"].asJsonObject
+        val r = VaultOpener.open(MemoryStorage(File(dir, f["file"].asString).readBytes()), "test".toByteArray(), prfs = listOf(Prf.SHA512)) as VaultResult.Opened
+        r.fileSystem.use { fs ->
+            assertTrue(fs is org.openvault.fs.exfat.ExfatFileSystem); assertTrue(fs.isReadOnly)
+            val seen = HashMap<String, String>()
+            fun walk(n: FsNode) { for (c in fs.list(n)) if (c.isDirectory) walk(c) else fs.open(c, OpenMode.READ).use { x -> val b = ByteArray(x.size.toInt()); var q = 0; while (q < b.size) q += x.read(q.toLong(), b, q, b.size - q); seen[c.path.toString().removePrefix("/")] = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) } } }
+            walk(fs.root())
+            assertEquals(f["files"].asJsonObject.entrySet().associate { it.key to it.value.asString }.toSortedMap(), seen.toSortedMap())
+        }
+    }
+}
+
+/** Informational throughput numbers (no assertions): desktop JVM, FAT32 in AES-XTS container, write-through I/O. */
+class ThroughputTest {
+    @Test fun `print sequential write and read MB per second`() {
+        val dir = File("../../testing/fixtures")
+        val f = JsonParser.parseString(File(dir, "fixtures.json").readText()).asJsonObject["fat32"].asJsonObject
+        val r = VaultOpener.open(MemoryStorage(File(dir, f["file"].asString).readBytes()), "test".toByteArray(), prfs = listOf(Prf.SHA512), readOnly = false) as VaultResult.Opened
+        r.fileSystem.use { fs ->
+            val data = ByteArray(16 * 1024 * 1024) { (it * 7).toByte() }
+            val n = fs.createFile(fs.root(), "bench.bin")
+            val t0 = System.nanoTime()
+            fs.open(n, OpenMode.READ_WRITE).use { x -> var p = 0; while (p < data.size) { x.write(p.toLong(), data, p, 65536); p += 65536 } }
+            val t1 = System.nanoTime()
+            val buf = ByteArray(65536)
+            fs.open(fs.resolve(FsPath.parse("bench.bin")), OpenMode.READ).use { x -> var p = 0L; while (true) { val k = x.read(p, buf, 0, buf.size); if (k < 0) break; p += k } }
+            val t2 = System.nanoTime()
+            println("THROUGHPUT write ${16.0 / ((t1 - t0) / 1e9)} MB/s, read ${16.0 / ((t2 - t1) / 1e9)} MB/s")
+        }
+    }
+}

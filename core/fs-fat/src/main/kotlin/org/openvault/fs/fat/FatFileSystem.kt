@@ -123,6 +123,33 @@ class FatFileSystem(
         throw FsNoSpaceException()
     }
 
+    /** Allocates [n] clusters in one pass and links them (and [prev] -> first) with batched FAT writes (FAT16/32); returns them in order. */
+    private fun allocClusters(n: Int, prev: Long): List<Long> {
+        if (n == 1 || bpb.type == FatType.FAT12) {
+            val out = ArrayList<Long>()
+            for (i in 0 until n) { val c = allocCluster(); if (i == 0 && prev != 0L) setFatEntry(prev, c) else if (i > 0) setFatEntry(out.last(), c); out += c }
+            return out
+        }
+        ensureFreeCount()
+        if (freeCount < n) throw FsNoSpaceException()
+        val total = bpb.clusterCount; val got = ArrayList<Long>(n)
+        var c = if (nextFree in 2 until total + 2) nextFree else 2L
+        var scanned = 0L
+        while (got.size < n && scanned < total) { if (fatEntry(c) == 0L) got += c; c = if (c + 1 < total + 2) c + 1 else 2; scanned++ }
+        if (got.size < n) throw FsNoSpaceException()
+        val ups = ArrayList<Pair<Long, Int>>()
+        fun put(cl: Long, v: Long) {
+            val off = if (bpb.type == FatType.FAT16) cl * 2 else cl * 4
+            if (bpb.type == FatType.FAT16) { ups += off to (v.toInt() and 0xff); ups += (off + 1) to ((v shr 8).toInt() and 0xff) }
+            else { ups += off to (v.toInt() and 0xff); ups += (off + 1) to ((v shr 8).toInt() and 0xff); ups += (off + 2) to ((v shr 16).toInt() and 0xff); ups += (off + 3) to ((fatGet(off + 3) and 0xf0) or ((v shr 24).toInt() and 0x0f)) }
+        }
+        for (i in got.indices) put(got[i], if (i + 1 < got.size) got[i + 1] else eoc)
+        if (prev != 0L) put(prev, got[0])
+        fatPutMany(ups)
+        freeCount -= n; nextFree = if (got.last() + 1 < total + 2) got.last() + 1 else 2
+        return got
+    }
+
     private fun freeChain(first: Long) {
         ensureFreeCount()
         for (c in chain(first)) { setFatEntry(c, 0); freeCount++; if (c < nextFree) nextFree = c }
@@ -371,7 +398,12 @@ class FatFileSystem(
             if (position >= size) return -1
             val n = minOf(len.toLong(), size - position).toInt(); var done = 0
             while (done < n) {
-                val pos = position + done; val ci = (pos / cb).toInt(); val co = (pos % cb).toInt(); val take = minOf(n - done, cb - co)
+                val pos = position + done; val ci = (pos / cb).toInt(); val co = (pos % cb).toInt()
+                if (co == 0 && n - done >= cb) {
+                    var run = 1; while (ci + run < clusters.size && (n - done) >= (run + 1) * cb && clusters[ci + run] == clusters[ci + run - 1] + 1) run++
+                    dev.readSectors(bpb.clusterFirstSector(clusters[ci]), dst, off + done, run * bpb.sectorsPerCluster); done += run * cb; continue
+                }
+                val take = minOf(n - done, cb - co)
                 dev.readSectors(bpb.clusterFirstSector(clusters[ci]), buf, 0, bpb.sectorsPerCluster)
                 System.arraycopy(buf, co, dst, off + done, take); done += take
             }
@@ -381,13 +413,16 @@ class FatFileSystem(
         /** Grows the chain to cover [bytes]; new clusters are zeroed except those [skipZeroFrom, skipZeroTo) fully overwritten by the caller. */
         private fun grow(bytes: Long, fullWriteFrom: Long = Long.MAX_VALUE, fullWriteTo: Long = Long.MIN_VALUE) {
             val need = ((bytes + cb - 1) / cb).toInt()
-            while (clusters.size < need) {
-                val c = allocCluster()
-                val idx = clusters.size.toLong(); val lo = idx * cb; val hi = lo + cb
-                if (!(fullWriteFrom <= lo && hi <= fullWriteTo)) zeroCluster(c)
-                if (clusters.isEmpty()) entryFirst = c else setFatEntry(clusters.last(), c)
-                clusters += c
+            val add = need - clusters.size
+            if (add <= 0) return
+            val firstIdx = clusters.size
+            val fresh = allocClusters(add, clusters.lastOrNull() ?: 0L)
+            if (clusters.isEmpty()) entryFirst = fresh[0]
+            for ((i, c) in fresh.withIndex()) {
+                val lo = (firstIdx + i).toLong() * cb
+                if (!(fullWriteFrom <= lo && lo + cb <= fullWriteTo)) zeroCluster(c)
             }
+            clusters += fresh
         }
         private var entryFirst: Long = entry.firstCluster
 
@@ -417,9 +452,13 @@ class FatFileSystem(
             grow(end, (position + cb - 1) / cb * cb, end / cb * cb)
             var done = 0
             while (done < len) {
-                val pos = position + done; val ci = (pos / cb).toInt(); val co = (pos % cb).toInt(); val take = minOf(len - done, cb - co)
-                val sec = bpb.clusterFirstSector(clusters[ci])
-                if (take == cb) System.arraycopy(src, off + done, buf, 0, cb) else { dev.readSectors(sec, buf, 0, bpb.sectorsPerCluster); System.arraycopy(src, off + done, buf, co, take) }
+                val pos = position + done; val ci = (pos / cb).toInt(); val co = (pos % cb).toInt()
+                if (co == 0 && len - done >= cb) { // whole clusters: coalesce a contiguous run into one device call
+                    var run = 1; while (ci + run < clusters.size && (len - done) >= (run + 1) * cb && clusters[ci + run] == clusters[ci + run - 1] + 1) run++
+                    dev.writeSectors(bpb.clusterFirstSector(clusters[ci]), src, off + done, run * bpb.sectorsPerCluster); done += run * cb; continue
+                }
+                val take = minOf(len - done, cb - co); val sec = bpb.clusterFirstSector(clusters[ci])
+                dev.readSectors(sec, buf, 0, bpb.sectorsPerCluster); System.arraycopy(src, off + done, buf, co, take)
                 dev.writeSectors(sec, buf, 0, bpb.sectorsPerCluster); done += take
             }
             if (end > size) size = end

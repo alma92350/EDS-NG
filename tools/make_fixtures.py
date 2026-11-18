@@ -71,7 +71,7 @@ def enc_header(salt, pw, prf, pim, plain):
     return salt + xts(key, 0, plain)
 
 
-def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None):
+def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None, exfat=False):
     """hidden = (pw, size, files) creates a hidden volume at the end of the outer data area."""
     rnd = lambda n: os.urandom(n)
     img = bytearray(rnd(size))
@@ -79,7 +79,14 @@ def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None,
     master = rnd(64) + rnd(192)
     mkey = master[:64]
     # --- inner plain FAT image for the outer volume
-    outer_fs = fat_image(name + "-outer", data_size, fat, files or {})
+    expected_files = None
+    if exfat:
+        sys.path.insert(0, os.path.dirname(__file__))
+        import make_exfat, tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "x.img"); expected_files = make_exfat.build(p, data_size); outer_fs = open(p, "rb").read()
+    else:
+        outer_fs = fat_image(name + "-outer", data_size, fat, files or {})
     for u in range(data_size // 512):
         img[HDR + u * 512:HDR + (u + 1) * 512] = xts(mkey, (HDR // 512) + u, outer_fs[u * 512:(u + 1) * 512])
     hid_info = None
@@ -107,7 +114,7 @@ def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None,
     path = os.path.join(OUT, name + ".hc")
     open(path, "wb").write(img)
     return {"file": name + ".hc", "password": pw, "prf": prf, "pim": pim, "keyfiles": [os.path.basename(k) for k in keyfiles],
-            "fat": fat, "size": size, "files": hashes(files or {}), "hidden": hid_info,
+            "fat": ("exfat" if exfat else fat), "size": size, "files": expected_files if expected_files is not None else hashes(files or {}), "hidden": hid_info,
             "master_key_hex": master[:64].hex()}
 
 
@@ -189,6 +196,7 @@ def main():
     cat["aes_sha512_keyfile"] = make("aes_sha512_keyfile", 5 * M, "test", keyfiles=[kf1, kf2], files=sample_files("e"))
     cat["unicode_pw"] = make("unicode_pw", 5 * M, "pässwörd✓", files=sample_files("f"))
     cat["fat16"] = make("fat16", 8 * M, "test", fat="16", files=sample_files("g"))
+    cat["aes_exfat"] = make("aes_exfat", 9 * M, "test", exfat=True)
     cat["fat32"] = make("fat32", 41 * M, "test", fat="32", files=sample_files("j"))
     cat["fat12"] = make("fat12", 2 * M, "test", fat="12", files=sample_files("h"))
     cat["hidden"] = make("hidden", 8 * M, "outer", files=sample_files("o"), hidden=("inner", 3 * M, sample_files("i")))

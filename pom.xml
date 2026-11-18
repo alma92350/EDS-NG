@@ -14,6 +14,7 @@
     <module>core/veracrypt</module>
     <module>core/fs-api</module>
     <module>core/fs-fat</module>
+    <module>core/fs-exfat</module>
     <module>core/vault</module>
     <module>tools/cli</module>
   </modules>

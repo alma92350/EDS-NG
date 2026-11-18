@@ -16,6 +16,11 @@ enum class Prf(val displayName: String, internal val newDigest: () -> Digest) {
     BLAKE2S("BLAKE2s-256", { Blake2sDigest(256) }),
     WHIRLPOOL("Whirlpool", ::WhirlpoolDigest),
     STREEBOG("Streebog", ::GOST3411_2012_512Digest);
+
+    companion object {
+        /** Fast PRFs (<= ~1.3 s each on a desktop JVM) for the default auto-detect; Whirlpool/Streebog cost 3.5-5.6 s each. */
+        val COMMON = listOf(SHA512, SHA256, BLAKE2S)
+    }
 }
 
 /** PBKDF2-HMAC with byte-array passwords (no char[] APIs, so binary/non-ASCII input is safe). */
