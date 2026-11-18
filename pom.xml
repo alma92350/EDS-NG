@@ -18,6 +18,7 @@
     <module>core/vault</module>
     <module>tools/cli</module>
     <module>app</module>
+    <module>desktop</module>
   </modules>
 
   <properties>

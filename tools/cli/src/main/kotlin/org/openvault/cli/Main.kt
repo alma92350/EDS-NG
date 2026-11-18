@@ -4,27 +4,15 @@ import org.openvault.crypto.Prf
 import org.openvault.crypto.VolumeMode
 import org.openvault.fs.*
 import org.openvault.fs.fat.FatFileSystem
-import org.openvault.io.RandomAccessStorage
-import org.openvault.io.checkRange
+import org.openvault.io.FileStorage
 import org.openvault.vault.VaultOpener
 import org.openvault.vault.VaultResult
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PrintStream
-import java.io.RandomAccessFile
 
-/** Desktop debugging CLI (PRD §4.2). Read-only. Never prints secrets. */
-class FileRandomAccessStorage(file: File, writable: Boolean = false) : RandomAccessStorage {
-    private val raf = RandomAccessFile(file, if (writable) "rw" else "r")
-    override val size get() = raf.length()
-    override val isReadOnly = !writable
-    override fun read(position: Long, dst: ByteArray, off: Int, len: Int) { checkRange(position, off, len, dst.size, size); raf.seek(position); raf.readFully(dst, off, len) }
-    override fun write(position: Long, src: ByteArray, off: Int, len: Int) { if (isReadOnly) throw java.io.IOException("read-only"); checkRange(position, off, len, src.size, size); raf.seek(position); raf.write(src, off, len) }
-    override fun flush() {}
-    override fun close() = raf.close()
-}
-
+/** Desktop debugging CLI (PRD §4.2). Read-only unless --rw. Never prints secrets. */
 private const val USAGE = """usage: openvault <command> <container> [path] [options]
 commands:
   info  <container>              show volume and filesystem details
@@ -70,7 +58,7 @@ fun run(args: List<String>, stdin: InputStream, out: OutputStream, err: PrintStr
         if (pw == null) return fail(err, "no password: use --password-stdin or -p")
         val password = pw.toByteArray(Charsets.UTF_8)
         val result = try {
-            VaultOpener.open(FileRandomAccessStorage(container, rw), password, pim, kfs.map { it.inputStream().buffered() }, prfs, readOnly = !rw, mode = if (tc) VolumeMode.TRUECRYPT else VolumeMode.VERACRYPT)
+            VaultOpener.open(FileStorage(container, rw), password, pim, kfs.map { it.inputStream().buffered() }, prfs, readOnly = !rw, mode = if (tc) VolumeMode.TRUECRYPT else VolumeMode.VERACRYPT)
         } finally { password.fill(0) }
         when (result) {
             is VaultResult.Failed -> return fail(err, "Incorrect password, PIM, keyfiles or unsupported settings")
