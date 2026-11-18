@@ -25,7 +25,7 @@ jobs:
           python3 tools/make_fixtures.py
           python3 tools/make_exfat.py
       - name: JVM tests (Maven)
-        run: mvn -B -q test -pl '!app'
+        run: mvn -B -q test
 
   apk:
     runs-on: ubuntu-latest

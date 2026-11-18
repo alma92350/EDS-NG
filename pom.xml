@@ -17,9 +17,17 @@
     <module>core/fs-exfat</module>
     <module>core/vault</module>
     <module>tools/cli</module>
-    <module>app</module>
     <module>desktop</module>
   </modules>
+
+  <profiles>
+    <!-- Sandbox-only build of the Android classes against Ubuntu's API 23 stubs (the real APK is built by Gradle in CI). -->
+    <profile>
+      <id>android-sandbox</id>
+      <activation><file><exists>/usr/lib/android-sdk/platforms/android-23/android.jar</exists></file></activation>
+      <modules><module>app</module></modules>
+    </profile>
+  </profiles>
 
   <properties>
     <kotlin.version>2.0.21</kotlin.version>
