@@ -11,3 +11,5 @@ app/dist/test-containers/
 app/build/
 apk/build/
 .gradle/
+testing/fixtures/*.img
+testing/fixtures/*_fixtures.json
