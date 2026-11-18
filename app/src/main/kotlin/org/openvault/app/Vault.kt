@@ -103,6 +103,8 @@ object Vault {
 class App : Application() {
     private var started = 0
 
+    override fun attachBaseContext(base: Context) { super.attachBaseContext(base); CrashReporter.install(this) }
+
     override fun onCreate() {
         super.onCreate()
         registerReceiver(object : BroadcastReceiver() {
