@@ -7,5 +7,6 @@
   <dependencies>
     <dependency><groupId>org.openvault</groupId><artifactId>openvault-core-io</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>compile</scope></dependency>
+    <dependency><groupId>org.openvault</groupId><artifactId>openvault-core-fs-api</artifactId><version>${project.version}</version></dependency>
   </dependencies>
 </project>

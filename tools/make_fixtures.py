@@ -71,7 +71,7 @@ def enc_header(salt, pw, prf, pim, plain):
     return salt + xts(key, 0, plain)
 
 
-def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="32", files=None, hidden=None):
+def make(name, size, pw, prf="sha512", pim=0, keyfiles=(), fat="16", files=None, hidden=None):
     """hidden = (pw, size, files) creates a hidden volume at the end of the outer data area."""
     rnd = lambda n: os.urandom(n)
     img = bytearray(rnd(size))
@@ -121,7 +121,7 @@ def fat_image(label, size, fat, files):
         p = os.path.join(d, "fs.img")
         with open(p, "wb") as f:
             f.truncate(size)
-        subprocess.run(["mkfs.fat", "-F", fat, "-s", "1" if fat == "16" else "2", "-n", "OPENVAULT", "-i", "01020304", p], check=True, capture_output=True)
+        subprocess.run(["mkfs.fat", "-F", fat, "-s", {"12": "2", "16": "1", "32": "1"}[fat], "-n", "OPENVAULT", "-i", "01020304", p], check=True, capture_output=True)
         for path, data in files.items():
             src = os.path.join(d, "src.bin")
             open(src, "wb").write(data)
@@ -137,6 +137,44 @@ def sample_files(tag):
             "data.bin": hashlib.sha512(tag.encode()).digest() * 400}
 
 
+def plain_images():
+    """Unencrypted FAT images with a rich tree (LFN, unicode, big dir, fragmentation) for the FAT driver tests."""
+    env = dict(os.environ, LC_ALL="C.UTF-8", MTOOLS_SKIP_CHECK="1")
+    cat = {}
+    for name, fat, size, spc in (("plain_fat12", "12", 3 * 512 * 1024, "1"), ("plain_fat16", "16", 16 * 1024 * 1024, "1"), ("plain_fat32", "32", 40 * 1024 * 1024, "1")):
+        path = os.path.join(OUT, name + ".img")
+        with open(path, "wb") as f:
+            f.truncate(size)
+        subprocess.run(["mkfs.fat", "-F", fat, "-s", spc, "-n", "PLAIN", "-i", "0A0B0C0D", path], check=True, capture_output=True)
+        files = {"hello.txt": b"hello plain\n", "docs/readme.txt": b"nested file\n" * 50,
+                 "data.bin": hashlib.sha512(name.encode()).digest() * 600,   # ~38 KB, many clusters
+                 "Long File Name Here.txt": b"long name\n" * 10, "Mixed Case.Txt": b"mixed case\n",
+                 "docs/deep/er/leaf.txt": b"leaf\n", "empty.txt": b""}
+        for i in range(150):
+            files[f"many/file{i:03d}.txt"] = f"entry {i}\n".encode()
+        def put(rel, data):
+            src = os.path.join(OUT, "_tmp.bin"); open(src, "wb").write(data)
+            parts = rel.split("/")
+            for i in range(1, len(parts)):
+                subprocess.run(["mmd", "-D", "s", "-i", path, "::/" + "/".join(parts[:i])], capture_output=True, env=env)
+            subprocess.run(["mcopy", "-i", path, src, "::/" + rel], check=True, capture_output=True, env=env)
+        # fragmentation: interleave small files, delete every other one, then write a big file into the holes
+        for i in range(12):
+            put(f"frag/s{i}.bin", bytes([i]) * 2048)
+        for i in range(0, 12, 2):
+            subprocess.run(["mdel", "-i", path, f"::/frag/s{i}.bin"], check=True, capture_output=True, env=env)
+        files.update({f"frag/s{i}.bin": bytes([i]) * 2048 for i in range(1, 12, 2)})
+        files["frag/big.bin"] = os.urandom(20000)
+        for rel, data in files.items():
+            if not rel.startswith("frag/s"):
+                put(rel, data)
+        os.remove(os.path.join(OUT, "_tmp.bin"))
+        cat[name] = {"file": name + ".img", "fat": fat, "files": hashes(files),
+                     "sizes": {k: len(v) for k, v in files.items()}}
+    json.dump(cat, open(os.path.join(OUT, "plain_fixtures.json"), "w"), indent=1, ensure_ascii=False)
+    return cat
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     kf1, kf2 = os.path.join(OUT, "keyfile1.bin"), os.path.join(OUT, "keyfile2.bin")
@@ -144,16 +182,18 @@ def main():
     open(kf2, "wb").write(b"second keyfile contents\n" * 20)
     M = 1024 * 1024
     cat = {}
-    cat["aes_sha512_fat32"] = make("aes_sha512_fat32", 5 * M, "test", files=sample_files("a"))
-    cat["aes_sha256_fat32"] = make("aes_sha256_fat32", 5 * M, "test", prf="sha256", files=sample_files("b"))
-    cat["aes_blake2s_fat32"] = make("aes_blake2s_fat32", 5 * M, "test", prf="blake2s", files=sample_files("c"))
+    cat["aes_sha512_fat"] = make("aes_sha512_fat", 5 * M, "test", files=sample_files("a"))
+    cat["aes_sha256_fat"] = make("aes_sha256_fat", 5 * M, "test", prf="sha256", files=sample_files("b"))
+    cat["aes_blake2s_fat"] = make("aes_blake2s_fat", 5 * M, "test", prf="blake2s", files=sample_files("c"))
     cat["aes_sha512_pim10"] = make("aes_sha512_pim10", 5 * M, "test", pim=10, files=sample_files("d"))
     cat["aes_sha512_keyfile"] = make("aes_sha512_keyfile", 5 * M, "test", keyfiles=[kf1, kf2], files=sample_files("e"))
     cat["unicode_pw"] = make("unicode_pw", 5 * M, "pässwörd✓", files=sample_files("f"))
     cat["fat16"] = make("fat16", 8 * M, "test", fat="16", files=sample_files("g"))
+    cat["fat32"] = make("fat32", 41 * M, "test", fat="32", files=sample_files("j"))
     cat["fat12"] = make("fat12", 2 * M, "test", fat="12", files=sample_files("h"))
     cat["hidden"] = make("hidden", 8 * M, "outer", files=sample_files("o"), hidden=("inner", 3 * M, sample_files("i")))
     json.dump(cat, open(os.path.join(OUT, "fixtures.json"), "w"), indent=2, ensure_ascii=False)
+    plain_images()
     print("generated", len(cat), "fixtures")
 
 
