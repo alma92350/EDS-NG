@@ -107,9 +107,12 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        registerReceiver(object : BroadcastReceiver() {
+        val screenOff = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) { if (Vault.policy.shouldLockOnScreenOff()) Vault.lock() }
-        }, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        }
+        // 4 = RECEIVER_NOT_EXPORTED (API 33); older versions have no such flag
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), 4)
+        else registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF))
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) { started++ }
             override fun onActivityStopped(a: Activity) { started-- }

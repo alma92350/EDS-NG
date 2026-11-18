@@ -9,3 +9,5 @@ testing/fixtures/*.bin
 testing/fixtures/fixtures.json
 app/dist/test-containers/
 app/build/
+apk/build/
+.gradle/
