@@ -44,10 +44,17 @@ class Pbkdf2Test {
         assertArrayEquals(long.copyOf(40), Pbkdf2.derive(prf, pw, salt, 3, 40))
     }
 
-    @Test fun `binary and non-ascii passwords work`() {
+    @Test fun `binary passwords work and differ when content differs`() {
         val a = Pbkdf2.derive(Prf.SHA512, byteArrayOf(0, -1, 0x80.toByte()), salt, 2, 64)
-        val b = Pbkdf2.derive(Prf.SHA512, byteArrayOf(0, -1, 0x80.toByte(), 0), salt, 2, 64)
+        val b = Pbkdf2.derive(Prf.SHA512, byteArrayOf(0, -1, 0x81.toByte()), salt, 2, 64)
         assertFalse(a.contentEquals(b))
+    }
+
+    @Test fun `HMAC zero-pads short keys so trailing zero bytes are equivalent`() {
+        // Standard HMAC behaviour (also VeraCrypt's): password "ab" and "ab\0" derive the same key.
+        val a = Pbkdf2.derive(Prf.SHA512, byteArrayOf(1, 2), salt, 2, 64)
+        val b = Pbkdf2.derive(Prf.SHA512, byteArrayOf(1, 2, 0), salt, 2, 64)
+        assertArrayEquals(a, b)
     }
 }
 
